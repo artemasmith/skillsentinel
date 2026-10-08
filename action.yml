@@ -1,0 +1,38 @@
+name: "SkillSentinel"
+description: "Scan a skills/prompt-config directory for prompt injection, exfil, backdoors and miners."
+inputs:
+  path:
+    description: "File or directory to scan"
+    required: true
+    default: "."
+  severity:
+    description: "Exit 1 for findings at/above this severity"
+    required: false
+    default: "medium"
+  sarif:
+    description: "Optional path to write a SARIF report"
+    required: false
+    default: ""
+outputs:
+  findings:
+    description: "Total number of findings"
+    value: ${{ steps.scan.outputs.findings }}
+runs:
+  using: "composite"
+  steps:
+    - id: scan
+      shell: bash
+      run: |
+        set -uo pipefail
+        ARGS=(scan "${{ inputs.path }}" --severity "${{ inputs.severity }}")
+        if [ -n "${{ inputs.sarif }}" ]; then
+          ARGS+=("--sarif" "${{ inputs.sarif }}")
+        fi
+        set +e
+        OUT=$(python3 -m skillsentinel "${ARGS[@]}")
+        RC=$?
+        set -e
+        echo "$OUT"
+        FINDINGS=$(echo "$OUT" | grep -oP 'Findings: \K[0-9]+' || echo "0")
+        echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
+        exit $RC

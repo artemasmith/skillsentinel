@@ -1,0 +1,47 @@
+name: skillsentinel
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"  # daily drift scan of this very repo's agent configs
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
+
+  self-scan:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan malicious fixtures (expect findings, exit 1 -> pass via SARIF upload)
+        run: |
+          set +e
+          python3 -m skillsentinel scan tests/fixtures/malicious --sarif scan.sarif --severity critical
+          RC=$?
+          set -e
+          if [ "$RC" -ne 1 ]; then
+            echo "expected exit 1 on malicious fixtures, got $RC"; exit 1
+          fi
+      - name: Scan repo itself (expect clean)
+        run: python3 -m skillsentinel scan . --severity medium
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: skillsentinel-sarif
+          path: scan.sarif
