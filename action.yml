@@ -29,7 +29,7 @@ runs:
           ARGS+=("--sarif" "${{ inputs.sarif }}")
         fi
         set +e
-        OUT=$(python3 -m skillsentinel "${ARGS[@]}")
+        OUT=$(PYTHONPATH="${GITHUB_ACTION_PATH}${PYTHONPATH:+:$PYTHONPATH}" python3 -m skillsentinel "${ARGS[@]}")
         RC=$?
         set -e
         echo "$OUT"
