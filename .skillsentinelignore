@@ -1,0 +1,4 @@
+# SkillSentinel's own rule catalog, fixtures and tests contain attack strings on
+# purpose — the scanner must not flag the corpus it is written against.
+tests/
+rules/rules.json
