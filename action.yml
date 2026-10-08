@@ -9,13 +9,17 @@ inputs:
     description: "Exit 1 for findings at/above this severity"
     required: false
     default: "medium"
+  profile:
+    description: "Verification strictness: strict | balanced | loose | paranoid"
+    required: false
+    default: "balanced"
   sarif:
     description: "Optional path to write a SARIF report"
     required: false
     default: ""
 outputs:
   findings:
-    description: "Total number of findings"
+    description: "Total number of confirmed findings"
     value: ${{ steps.scan.outputs.findings }}
 runs:
   using: "composite"
@@ -24,7 +28,8 @@ runs:
       shell: bash
       run: |
         set -uo pipefail
-        ARGS=(scan "${{ inputs.path }}" --severity "${{ inputs.severity }}")
+        ARGS=(scan "${{ inputs.path }}" --severity "${{ inputs.severity }}"
+              --profile "${{ inputs.profile }}")
         if [ -n "${{ inputs.sarif }}" ]; then
           ARGS+=("--sarif" "${{ inputs.sarif }}")
         fi
@@ -33,6 +38,6 @@ runs:
         RC=$?
         set -e
         echo "$OUT"
-        FINDINGS=$(echo "$OUT" | grep -oP 'Findings: \K[0-9]+' || echo "0")
+        FINDINGS=$(echo "$OUT" | grep -oP 'Confirmed findings: \K[0-9]+' || echo "0")
         echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
         exit $RC
