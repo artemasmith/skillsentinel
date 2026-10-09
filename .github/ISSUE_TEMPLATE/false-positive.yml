@@ -1,0 +1,56 @@
+name: False positive
+description: SkillSentinel flagged a benign skill/file as malicious
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A false positive is a finding we confirmed (`exploitable`
+        or a wrongly-confirmed candidate) on a file you believe is benign.
+        Please include the raw output — the `verdict:` line and its reason are what we fix.
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command you ran
+      placeholder: python3 -m skillsentinel scan path/to/skills --profile balanced
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Scanner output (paste the finding + verdict line verbatim)
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: The flagged file (or a minimized reproduction)
+      description: Redact real secrets/URLs, but keep the structure that triggered the rule.
+    validations:
+      required: true
+  - type: textarea
+    id: why-benign
+    attributes:
+      label: Why is this benign?
+      description: What is the legitimate purpose of this file/line?
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile used
+      options:
+        - balanced (default)
+        - strict
+        - loose
+        - paranoid
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SkillSentinel version
+      placeholder: "0.1.0"
+    validations:
+      required: true

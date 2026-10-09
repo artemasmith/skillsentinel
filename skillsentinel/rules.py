@@ -19,11 +19,30 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Pattern
 
-RULES_PATH = Path(__file__).resolve().parent.parent / "rules" / "rules.json"
+def _default_rules_path() -> Path:
+    """Locate the rule catalog in both layouts.
+
+    Source checkout: <repo>/rules/rules.json. Installed wheel: the data file lands
+    in <prefix>/share/skillsentinel/rules/rules.json (see [tool.setuptools.data-files])
+    while site-packages/skillsentinel/ has no sibling rules/ directory.
+    """
+    pkg_dir = Path(__file__).resolve().parent
+    candidates = [
+        pkg_dir.parent / "rules" / "rules.json",                     # source tree
+        Path(sys.prefix) / "share" / "skillsentinel" / "rules" / "rules.json",  # installed
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+    return candidates[0]  # missing path -> the caller's error names the source layout
+
+
+RULES_PATH = _default_rules_path()
 
 SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 KINDS = {"intent", "capability"}

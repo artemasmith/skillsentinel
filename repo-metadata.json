@@ -1,0 +1,26 @@
+{
+  "description": "Post-install skill scanner for AI-agent skills and prompt configs: prompt injection, unicode smuggling, exfil, miners, persistence, MCP backdoors. Watches installed skills for rug-pull drift; detonates scripts in a sandbox. For Claude Code, MCP, any agent with skills. MIT, zero deps.",
+  "topics": [
+    "ai-agents",
+    "ai-security",
+    "llm-security",
+    "prompt-injection",
+    "agent-security",
+    "claude-code",
+    "mcp",
+    "mcp-security",
+    "supply-chain-security",
+    "static-analysis",
+    "security-scanner",
+    "devsecops",
+    "owasp",
+    "sarif",
+    "github-actions",
+    "python",
+    "cli",
+    "sandbox",
+    "skill-scanner",
+    "unicode-security"
+  ],
+  "homepage": ""
+}

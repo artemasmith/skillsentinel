@@ -1,0 +1,54 @@
+name: False negative
+description: A malicious skill or line SkillSentinel missed
+labels: ["false-negative"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A false negative is a malicious pattern (or a whole malicious file) that produced
+        no confirmed finding — either no rule matched, or the verifier demoted the candidate.
+        If you are pasting a real-world malicious skill, neutralize payloads
+        (example.com domains, placeholder tokens) — keep the structure that evaded detection.
+  - type: textarea
+    id: file
+    attributes:
+      label: The file or pattern that was missed (neutralized)
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Scanner output for that file
+      description: Paste what SkillSentinel reported (or "No exploitable findings"). If the candidate was demoted, include the demotion reason from --json.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: miss-type
+    attributes:
+      label: Type of miss
+      options:
+        - No rule matched at all
+        - Candidate was demoted by the verifier (wrong verdict)
+        - Rule matched but severity is too low
+        - File type / location not scanned
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile used
+      options:
+        - balanced (default)
+        - strict
+        - loose
+        - paranoid
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SkillSentinel version
+      placeholder: "0.1.0"
+    validations:
+      required: true
