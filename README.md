@@ -25,7 +25,7 @@ Every scanner in this space — SkillSpector, agent-scan, mcp-scanner — looks 
 
 The second reason skill scanners get uninstalled is **false positives**. A rule that fires on `~/.ssh/id_rsa` also fires on the documentation that *warns* about `~/.ssh/id_rsa`; after the third false alarm, nobody runs the scanner anymore. SkillSentinel's answer is two-stage verdicts (next section): a regex match is only a *candidate*, and every demotion carries a written reason.
 
-And because a static claim about what a script does is still an opinion, `--detonate` runs the script in a disposable [bubblewrap](https://github.com/containers/bubblewrap) sandbox with shimmed network tools and records every attempted egress destination — turning "this looks like it phones home" into observed evidence.
+And because a static claim about what a script does is still an opinion, `--detonate` runs the script in a disposable [bubblewrap](https://github.com/containers/bubblewrap) sandbox that has **no network at all** (`--unshare-net`) and records every attempted egress destination via shimmed network tools — turning "this looks like it phones home" into observed evidence, without letting the script actually reach the internet. `--allow-net` lifts the isolation explicitly (each detonation then prints a `network NOT isolated` warning); a bwrap build that cannot honor `--unshare-net` makes detonation refuse (stderr message, exit 2) rather than run with live egress.
 
 ## How verdicts work
 
@@ -181,7 +181,7 @@ Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/wor
 
 ```
 scan <path> [--json] [--sarif OUT] [--severity SEV] [--profile P] [--exclude GLOB]
-           [--honor-ignores] [--detonate] [--rules rules.json]
+           [--honor-ignores] [--detonate] [--allow-net] [--rules rules.json]
            [--timeout SEC] [--max-files N]
 watch init <dir> [--snapshot FILE]   record SHA-256 snapshot
 watch diff <dir> [--snapshot FILE]   exit 1 on any drift (rug-pull)
@@ -195,12 +195,12 @@ Run as `python3 -m skillsentinel ...` or `pip install .` for the `skillsentinel`
 
 ## Zero dependencies
 
-Pure Python stdlib (`re`, `json`, `hashlib`, `argparse`, `subprocess`, `pathlib`) — no supply chain to trust except the tool that audits supply chains. Python ≥ 3.10; [bubblewrap](https://github.com/containers/bubblewrap) is optional and only needed for `--detonate` (without it, detonation is honestly skipped with a notice, never faked).
+Pure Python stdlib (`re`, `json`, `hashlib`, `argparse`, `subprocess`, `pathlib`) — no supply chain to trust except the tool that audits supply chains. Python ≥ 3.10; [bubblewrap](https://github.com/containers/bubblewrap) is optional and only needed for `--detonate` (without it, detonation is honestly skipped with a notice, never faked). Detonation sandboxes always get `--unshare-net`; if the installed bwrap cannot honor it, detonation refuses with a stderr message and exit 2 instead of running with live network.
 
 ## Limitations
 
 - The verifier is heuristic. It demotes some genuinely hostile lines and can confirm a benign one — check `--json` demotion reasons before acting on a verdict.
-- Detonation records *observed* egress through shimmed `curl`/`wget`/`nc`/`ssh`; raw sockets and non-PATH binaries are not intercepted. It is evidence, not a guarantee.
+- Detonation sandboxes are network-isolated by default (`--unshare-net`): raw sockets cannot connect, and shimmed `curl`/`wget`/`nc`/`ssh` log every attempted destination. Non-PATH binaries are not shimmed. With `--allow-net` the isolation is lifted and every detonation is stamped `network NOT isolated` — the log is then evidence, not a guarantee.
 - Drift detection is content-hash based: an attacker with write access to the snapshot file itself can re-pin it — store the snapshot outside the watched tree (or in CI).
 - Linux-centric: detonation needs bwrap on Linux; unicode and static rules work anywhere.
 

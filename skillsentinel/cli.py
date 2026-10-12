@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .detonate import detonate_tree
+from .detonate import DetonationRefusedError, detonate_tree
 from .rules import load_rules, SEVERITY_ORDER
 from .scanner import InputError, scan_path, to_sarif
 from .verifier import VERIFIERS_BY_NAME
@@ -86,22 +86,27 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # only under --honor-ignores — exactly like inline suppression markers.
     ignore_patterns = load_ignore_file(root) if args.honor_ignores else []
     result = scan_path(args.path, args.rules,
-                       honor_ignores=args.honor_ignores,
+                      honor_ignores=args.honor_ignores,
                        exclude=list(args.exclude),
                        ignore_patterns=ignore_patterns,
                        profile=args.profile,
                        timeout=args.timeout,
                        max_files=args.max_files)
+    reports = None
+    if args.detonate:
+        try:
+            reports = detonate_tree(Path(args.path), allow_net=args.allow_net)
+        except DetonationRefusedError as e:
+            print(f"detonation refused: {e}", file=sys.stderr)
+            return 2
     if args.json:
         payload = result.to_dict()
-        if args.detonate:
-            reports = detonate_tree(Path(args.path))
+        if reports is not None:
             payload["detonations"] = [r.to_dict() for r in reports]
         print(json.dumps(payload, indent=2))
     else:
         _print_findings(result, use_color=sys.stdout.isatty(), suppressed=result.suppressed)
-        if args.detonate:
-            reports = detonate_tree(Path(args.path))
+        if reports is not None:
             print(f"\n-- Detonation ({len(reports)} scripts) --")
             for r in reports:
                 if not r.executed:
@@ -109,6 +114,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
                     continue
                 net = ", ".join(r.network_attempts) or "none observed"
                 print(f"[ran ] {r.file}  exit={r.exit_code}  egress: {net}")
+                if any("network NOT isolated" in n for n in r.notes):
+                    print("[warn] network NOT isolated (--allow-net): the "
+                          "sandbox shares the host network — real egress "
+                          "is possible")
     if args.sarif:
         sarif = to_sarif(result)
         Path(args.sarif).write_text(json.dumps(sarif, indent=2), encoding="utf-8")
@@ -208,7 +217,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "bounds huge trees without silently ignoring the rest")
     s.add_argument("--detonate", action="store_true",
                    help="run discovered scripts in a disposable bwrap sandbox "
-                        "(requires bubblewrap; skipped with a notice otherwise)")
+                        "with no network access (--unshare-net; requires "
+                        "bubblewrap, skipped with a notice otherwise)")
+    s.add_argument("--allow-net", action="store_true",
+                   help="with --detonate: lift network isolation — the sandbox "
+                        "CAN open real connections (each detonation prints a "
+                        "'network NOT isolated' warning)")
     s.set_defaults(func=cmd_scan)
 
     w = sub.add_parser("watch", help="snapshot installed skills and detect drift")

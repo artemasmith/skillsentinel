@@ -1,9 +1,12 @@
 """`--detonate`: run skill scripts in a disposable bwrap sandbox, record egress attempts.
 
-Honest fallback: if bwrap is unavailable, detonation is skipped and reported as such.
-Egress observation intercepts common network tools (curl/wget/nc/ssh/...) via PATH
-shims that log the destination. Raw-socket traffic is NOT blocked: the sandbox shares
-the host network, so the report records observed attempts, not a guarantee.
+Network isolation by default: the sandbox is built with --unshare-net, so no process
+inside can open a connection — attempted tool egress (curl/wget/nc/ssh/...) is still
+observed via PATH shims that log the destination. If the host bwrap cannot honor
+--unshare-net, detonation is refused outright (never a live-egress fallback); the
+caller reports it on stderr and exits 2. `allow_net=True` lifts the isolation
+explicitly and stamps the report with a 'network NOT isolated' warning. If bwrap is
+unavailable, detonation is skipped and reported as such.
 """
 
 from __future__ import annotations
@@ -23,6 +26,10 @@ sys.exit(7)
 """
 
 SHIM_TOOLS = ("curl", "wget", "nc", "ncat", "ping", "telnet", "ssh", "scp", "ftp", "dig")
+
+
+class DetonationRefusedError(RuntimeError):
+    """bwrap cannot guarantee network isolation — detonation must not run."""
 
 
 @dataclass
@@ -63,7 +70,26 @@ def _base_bind_args() -> list[str]:
     return args
 
 
-def detonate_file(path: Path, timeout: int = 10) -> DetonationReport:
+def _bwrap_can_isolate_network(bwrap: str) -> bool:
+    """Non-destructive preflight: can this bwrap build a --unshare-net sandbox?
+
+    Runs /usr/bin/true in a throwaway sandbox with the same base binds the real
+    detonation uses. Old bwrap builds reject the option outright ("unrecognized
+    option", exit 1); any probe failure counts as "cannot isolate", so the caller
+    refuses instead of running untrusted code with live egress.
+    """
+    try:
+        proc = subprocess.run(
+            [bwrap, "--unshare-net", *_base_bind_args(), "/usr/bin/true"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def detonate_file(path: Path, timeout: int = 10,
+                  allow_net: bool = False) -> DetonationReport:
     bwrap = shutil.which("bwrap")
     if bwrap is None:
         return DetonationReport(
@@ -71,6 +97,14 @@ def detonate_file(path: Path, timeout: int = 10) -> DetonationReport:
             notes=["bwrap not available — detonation skipped "
                    "(install bubblewrap to enable)"],
         )
+
+    if not allow_net and not _bwrap_can_isolate_network(bwrap):
+        raise DetonationRefusedError(
+            f"{bwrap} does not support --unshare-net — detonation refused: "
+            "a sandbox without network isolation would run untrusted code with "
+            "real egress. Upgrade bubblewrap to a build with --unshare-net "
+            "support, or pass --allow-net to explicitly accept a networked "
+            "sandbox.")
 
     with tempfile.TemporaryDirectory(prefix="ssdet_") as tmp:
         tmpdir = Path(tmp)
@@ -103,9 +137,10 @@ def detonate_file(path: Path, timeout: int = 10) -> DetonationReport:
             "--bind", str(home), "/home/sandbox",
             "--bind", str(netlog), "/netlog.txt",
             "--chdir", "/work",
-            "--die-with-parent",
-            "--new-session",
         ]
+        if not allow_net:
+            cmd.append("--unshare-net")
+        cmd += ["--die-with-parent", "--new-session"]
         if script_copy.suffix == ".py":
             cmd += ["python3", f"/work/{path.name}"]
         else:
@@ -138,14 +173,21 @@ def detonate_file(path: Path, timeout: int = 10) -> DetonationReport:
             attempts = []
 
         o, e2 = _tails(out, err)
+        if allow_net:
+            net_note = ("network NOT isolated (--allow-net): the sandbox shares "
+                        "the host network — real egress is possible")
+        else:
+            net_note = ("network isolated (--unshare-net): no connection can be "
+                        "opened from inside the sandbox")
         return DetonationReport(
             file=str(path), executed=True, sandbox="bwrap",
             exit_code=rc, stdout_tail=o, stderr_tail=e2,
             network_attempts=attempts,
-            notes=["egress observed via PATH shims (curl/wget/nc/ssh/...); "
-                   "raw-socket egress is not intercepted"],
+            notes=[net_note,
+                   "attempted tool egress is logged via PATH shims "
+                   "(curl/wget/nc/ssh/...)"],
         )
 
 
-def detonate_tree(root: Path) -> list[DetonationReport]:
-    return [detonate_file(p) for p in find_scripts(root)]
+def detonate_tree(root: Path, allow_net: bool = False) -> list[DetonationReport]:
+    return [detonate_file(p, allow_net=allow_net) for p in find_scripts(root)]
