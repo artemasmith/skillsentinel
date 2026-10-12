@@ -31,6 +31,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4   # the CHANGELOG lives in the repo, not in the artifact
       - uses: actions/download-artifact@v4
         with:
           name: dist
