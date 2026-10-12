@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .scanner import sha256_file
+from .scanner import Finding, _iter_target_files, scan_path, sha256_file
 
 SNAPSHOT_VERSION = 1
 
@@ -74,3 +74,20 @@ def diff_snapshots(old: dict, new: dict) -> dict:
 
 def load_snapshot(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def rescan_changes(root: Path, diff: dict) -> list[Finding]:
+    """Re-scan the changed/added files of a diff_snapshots() result.
+
+    Returns their confirmed findings so `watch diff --rescan` explains WHAT
+    drifted, not only that something did. Removed files have nothing left to
+    scan and are skipped. Each file is scanned standalone (path == root), so
+    `file` in the findings is the basename.
+    """
+    findings: list[Finding] = []
+    for rel in sorted(set(diff.get("added", [])) | set(diff.get("changed", []))):
+        p = Path(root) / rel
+        if not p.is_file():
+            continue  # vanished between diff and rescan — the removal already reports it
+        findings.extend(scan_path(p).findings)
+    return findings

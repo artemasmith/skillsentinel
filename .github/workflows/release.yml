@@ -1,0 +1,66 @@
+name: release
+
+# Tag-driven only: cutting a release is an explicit act (git tag v*), never a
+# side effect of pushing to a branch.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # create the GitHub Release and attach artifacts
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          python3 -m pip install --upgrade build
+          python3 -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Create GitHub Release with the artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+  publish:
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Publish to PyPI (only when PYPI_API_TOKEN is set)
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          # The token is never echoed; only its presence is tested.
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "PYPI_API_TOKEN is not set — release artifacts built and attached, PyPI publish skipped."
+            exit 0
+          fi
+          python3 -m pip install --upgrade twine
+          python3 -m twine upload --non-interactive dist/*

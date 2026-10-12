@@ -61,6 +61,16 @@ python3 -m skillsentinel watch init ~/.claude/skills && python3 -m skillsentinel
 
 Exit code `1` when findings meet the severity threshold — drop it straight into CI.
 
+## Install
+
+```bash
+pipx install skillsentinel                 # preferred: isolated CLI on your PATH
+# or straight from the git repo (works before any PyPI release):
+pip install git+https://github.com/artemasmith/skillsentinel
+```
+
+Zero runtime dependencies (stdlib only), Python ≥ 3.10. From a checkout no install is needed at all — `python3 -m skillsentinel …` runs in place.
+
 ## Exit codes
 
 | code | meaning |
@@ -76,7 +86,7 @@ Every error is one line on stderr, never a traceback. Two flags bound runaway tr
 
 ```console
 $ python3 -m skillsentinel scan tests/fixtures/malicious
-SkillSentinel v0.1.0 — scanned tests/fixtures/malicious (10 files, 0 skipped, profile: balanced)
+SkillSentinel v0.2.0 — scanned tests/fixtures/malicious (10 files, 0 skipped, profile: balanced)
 Confirmed findings: 42 (critical: 27, high: 14, medium: 1, low: 0); 3 candidate(s) demoted
 
 == CRITICAL ==
@@ -99,12 +109,12 @@ Confirmed findings: 42 (critical: 27, high: 14, medium: 1, low: 0); 3 candidate(
 exit code 1
 
 $ python3 -m skillsentinel scan tests/fixtures/benign
-SkillSentinel v0.1.0 — scanned tests/fixtures/benign (6 files, 0 skipped, profile: balanced)
+SkillSentinel v0.2.0 — scanned tests/fixtures/benign (6 files, 0 skipped, profile: balanced)
 No exploitable findings. Supply chain looks clean. ✓
 exit code 0
 
 $ python3 -m skillsentinel scan tests/fixtures/benign-hard   # lookalikes that are NOT malicious
-SkillSentinel v0.1.0 — scanned tests/fixtures/benign-hard (6 files, 0 skipped, profile: balanced)
+SkillSentinel v0.2.0 — scanned tests/fixtures/benign-hard (6 files, 0 skipped, profile: balanced)
 No exploitable findings. Supply chain looks clean. ✓; 13 candidate(s) demoted — see --json for reasons
 exit code 0
 
@@ -174,14 +184,28 @@ Star counts are not shown on purpose — check each repo. SkillSpector catches t
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: artemasmith/skillsentinel@main
+- uses: artemasmith/skillsentinel@v0.2.0
   with:
     path: .
     severity: medium          # fail the build at/above this severity
     sarif: skillsentinel.sarif
 ```
 
-Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/workflows/skillsentinel.yml) (test matrix 3.10–3.14, self-scan, SARIF artifact, and a scheduled daily drift scan of this very repo's agent configs).
+Pinned to a release tag on purpose: running security tooling from `@main` means whatever was pushed last. Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/workflows/skillsentinel.yml) (test matrix 3.10–3.14, self-scan, SARIF artifact + upload to the Security tab, and a scheduled daily drift scan of this very repo's agent configs).
+
+## pre-commit
+
+Fail the commit when a skill file or agent config in the repo carries confirmed findings:
+
+```yaml
+repos:
+  - repo: https://github.com/artemasmith/skillsentinel
+    rev: v0.2.0
+    hooks:
+      - id: skillsentinel
+```
+
+The hook (see [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml)) scans the repo root whenever a staged file matches the skill/config pattern and exits non-zero on confirmed findings.
 
 ## Commands
 
@@ -190,7 +214,10 @@ scan <path> [--json] [--sarif OUT] [--severity SEV] [--profile P] [--exclude GLO
            [--honor-ignores] [--detonate] [--allow-net] [--show-inconclusive]
            [--rules rules.json] [--timeout SEC] [--max-files N]
 watch init <dir> [--snapshot FILE]   record SHA-256 snapshot
-watch diff <dir> [--snapshot FILE]   exit 1 on any drift (rug-pull)
+watch diff <dir> [--snapshot FILE] [--rescan]
+                                     exit 1 on any drift (rug-pull);
+                                     --rescan re-scans changed/added files
+                                     and prints their confirmed findings
 watch show <dir>                     print current snapshot
 rules [--json]                       list all detection rules
 ```
@@ -198,6 +225,15 @@ rules [--json]                       list all detection rules
 Exit codes 0/1/2/3 are documented above and in `scan --help`.
 
 Run as `python3 -m skillsentinel ...` or `pip install .` for the `skillsentinel` entry point.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Clean — no confirmed findings at/above `--severity`; for `watch diff`, no drift since the snapshot. |
+| `1` | Confirmed findings at/above `--severity` (default: any), or drift detected by `watch diff`. |
+| `2` | Usage error (bad arguments), or `watch diff` run before `watch init` (snapshot missing). |
+| `3` | Reserved for severity-graded exits (the `SEV_EXIT` mapping in `cli.py`); no current code path returns it. |
 
 ## Zero dependencies
 

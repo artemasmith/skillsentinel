@@ -1,0 +1,13 @@
+# pre-commit integration: https://pre-commit.com/#creating-new-hooks
+#
+# Scans the whole repo root whenever a staged file looks like a skill or an
+# agent/prompt config (pass_filenames: false — the CLI takes one path, and a
+# repo-level scan is what "guard the supply chain" means). Exits non-zero on
+# confirmed findings, so a hostile skill fails the commit.
+- id: skillsentinel
+  name: skillsentinel
+  description: Scan AI-agent skills and prompt configs for supply-chain attacks (prompt injection, exfil, miners, persistence, MCP backdoors).
+  entry: skillsentinel scan .
+  language: python
+  pass_filenames: false
+  files: (^|/)(skills|\.claude|\.codex|\.config|\.agents)/|\.(md|markdown|txt|json|ya?ml|toml|sh|bash|zsh|py|js|ts|cfg|ini|env)$

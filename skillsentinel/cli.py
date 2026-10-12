@@ -13,7 +13,8 @@ from .detonate import DetonationRefusedError, detonate_tree
 from .rules import load_rules, SEVERITY_ORDER
 from .scanner import InputError, scan_path, to_sarif
 from .verifier import VERIFIERS_BY_NAME
-from .watch import write_snapshot, load_snapshot, diff_snapshots, snapshot_dir
+from .watch import (write_snapshot, load_snapshot, diff_snapshots, snapshot_dir,
+                    rescan_changes)
 
 SEV_EXIT: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -165,6 +166,17 @@ def cmd_watch(args: argparse.Namespace) -> int:
         for k in ("added", "changed", "removed"):
             for p in d[k]:
                 print(f"  {k:>7}: {p}")
+        if getattr(args, "rescan", False):
+            findings = rescan_changes(root, d)
+            if findings:
+                print(f"\nRescan of changed/added files — "
+                      f"{len(findings)} confirmed finding(s):")
+                for f in findings:
+                    print(f"  [{f.rule_id}] {f.file}:{f.line}  {f.title}")
+                    print(f"    {f.snippet[:160]}")
+                    print(f"    verdict: {f.verdict} — {f.reason}")
+            else:
+                print("\nRescan of changed/added files: no confirmed findings.")
         return 1
     print(json.dumps(snapshot_dir(root), indent=2))
     return 0
@@ -244,6 +256,9 @@ def build_parser() -> argparse.ArgumentParser:
         wp.add_argument("path", help="directory of installed skills")
         wp.add_argument("--snapshot", default=".skillsentinel-snapshot.json",
                         help="snapshot file path (default: .skillsentinel-snapshot.json)")
+    wsub.choices["diff"].add_argument(
+        "--rescan", action="store_true",
+        help="also re-scan changed/added files and print their confirmed findings")
     w.set_defaults(func=cmd_watch, watch_cmd="show")
 
     r = sub.add_parser("rules", help="list detection rules")
