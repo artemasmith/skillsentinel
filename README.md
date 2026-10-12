@@ -15,7 +15,7 @@
 [![CI](https://github.com/artemasmith/skillsentinel/actions/workflows/skillsentinel.yml/badge.svg)](https://github.com/artemasmith/skillsentinel/actions/workflows/skillsentinel.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
-[![Rules](https://img.shields.io/badge/rules-38-purple.svg)](rules/rules.json)
+[![Rules](https://img.shields.io/badge/rules-39-purple.svg)](rules/rules.json)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-success.svg)](#zero-dependencies)
 [![OWASP Agentic Top 10](https://img.shields.io/badge/mapped%20to-OWASP%20Agentic%20Top%2010-red.svg)](#what-it-detects)
 
@@ -36,10 +36,16 @@ pattern match ──► candidate ──► file-local verifier ──► findin
                           with a written reason                is traceable
 ```
 
-1. **Pattern match → candidate.** 38 rules, cheap, high recall, allowed to be noisy.
+1. **Pattern match → candidate.** 39 rules, cheap, high recall, allowed to be noisy.
 2. **Candidate → verdict.** A deterministic, file-local verifier confirms it (`exploitable` — e.g. a secret read in a file that also performs network egress), downgrades it (`capability` — a dual-use primitive, credible but not proof), or drops it (`low_trust`) — in that case the candidate stays visible in `--json` with its demotion reason.
 
 What the verifier actually decides on: is the line a directive to an agent, code, or prose? Is it inside a fenced code block or explicitly negated? Is a secret read corroborated by egress **in the same file**? Is a base64 blob accompanied by a decode call? Does the line merely enumerate attack signatures (a detection table) instead of issuing them? Four profiles (`--profile strict|balanced|loose|paranoid`) trade precision against recall. No LLM, no network, no hidden state.
+
+A defensive word ("detection", "attacker", "scanner") only demotes a hit when it *governs* the match — before it ("detects the phrase ...", negation) or inside a URL token — not when it is the object of the attack sentence ("send `~/.ssh/id_rsa` to the attacker"), where it is the attack naming its own target.
+
+**Anti-obfuscation passes.** Before grading, the scanner also matches rules against the file with invisible characters (zero-width, soft hyphen, bidi/format) stripped and NFKC compatibility forms folded — so "Ignore all previous instructions" with a spliced-in U+200B still hits SS001, and the file gets an extra `SS039 invisible characters normalized` finding at the smuggled line. A second pass correlates payload blobs with execution: a base64/hex blob assigned to a variable that a later line `exec`/`eval`s is decoded, and the decoded text is run through the same rules — a confirmed hit carries `decoded_from` in `--json`. Correlated, not assumed: a blob nobody executes is inert test data and stays quiet.
+
+**Profiles.** `balanced` (default) demotes as described. `strict` disables demotions: every candidate — whatever it would be graded, `low_trust`, `capability` or `inconclusive` — is confirmed instead, so `demoted` comes back empty; a strict superset of `balanced`, for triage when you want zero judged-away hits. `loose` keeps self-described examples; `paranoid` keeps nearly everything. Candidates the verifier could not decide (`inconclusive`, e.g. an unknown-context file) are listed in text output as `N inconclusive candidate(s)` — always when they exist, or on demand with `--show-inconclusive` — each with rule, `file:line` and reason.
 
 The tradeoff is deliberate: some hostile lines will be demoted and some benign ones confirmed — it is a heuristic. That is why every demotion is reported with a reason instead of hidden, and why `benign-hard` (below) is part of the test suite.
 
@@ -132,7 +138,7 @@ exit code 1
 
 ## What it detects
 
-38 rules, all mapped to the [OWASP Agentic Top 10](https://genai.owasp.org/):
+39 rules, all mapped to the [OWASP Agentic Top 10](https://genai.owasp.org/):
 
 | Category | Severity range | OWASP | Examples |
 |---|---|---|---|
@@ -181,8 +187,8 @@ Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/wor
 
 ```
 scan <path> [--json] [--sarif OUT] [--severity SEV] [--profile P] [--exclude GLOB]
-           [--honor-ignores] [--detonate] [--allow-net] [--rules rules.json]
-           [--timeout SEC] [--max-files N]
+           [--honor-ignores] [--detonate] [--allow-net] [--show-inconclusive]
+           [--rules rules.json] [--timeout SEC] [--max-files N]
 watch init <dir> [--snapshot FILE]   record SHA-256 snapshot
 watch diff <dir> [--snapshot FILE]   exit 1 on any drift (rug-pull)
 watch show <dir>                     print current snapshot
