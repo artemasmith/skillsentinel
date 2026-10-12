@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from . import __version__
@@ -37,6 +39,39 @@ def _colorized(s: str, sev: str, enabled: bool) -> str:
     if not enabled:
         return s
     return f"{SEV_COLOR[sev]}{s}{SEV_COLOR['end']}"
+
+
+def _park_stdout_on_devnull() -> None:
+    """After a stdout write failed, point fd 1 at /dev/null so the interpreter's
+    shutdown flush of the leftover buffer cannot re-raise — without this a
+    broken pipe turns into an "Exception ignored" dump and rc=120. Call only
+    after the real error line is already on stderr."""
+    try:
+        null = os.open(os.devnull, os.O_WRONLY)
+    except OSError:  # nothing to hide the failure behind: best effort only
+        return
+    try:
+        os.dup2(null, sys.stdout.fileno())
+    except (OSError, ValueError):
+        pass  # already detached/closed — nothing buffered can re-raise then
+    finally:
+        os.close(null)
+
+
+def _emit_stdout(emit: Callable[[], None], what: str) -> bool:
+    """Run a stdout-writing report block AND flush it here, so a stdout that
+    cannot be written (closed pipe, full device) fails now as one clean error
+    naming the output — not at interpreter shutdown. Returns False after
+    printing that line and muting fd 1 (see _park_stdout_on_devnull)."""
+    try:
+        emit()
+        sys.stdout.flush()
+    except (BrokenPipeError, OSError) as e:
+        print(f"skillsentinel: error: cannot write {what}: {e}",
+              file=sys.stderr)
+        _park_stdout_on_devnull()
+        return False
+    return True
 
 
 def _print_findings(result, use_color: bool, suppressed: int = 0,
@@ -106,12 +141,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         except DetonationRefusedError as e:
             print(f"detonation refused: {e}", file=sys.stderr)
             return 2
-    if args.json:
-        payload = result.to_dict()
-        if reports is not None:
-            payload["detonations"] = [r.to_dict() for r in reports]
-        print(json.dumps(payload, indent=2))
-    else:
+    def _text_report() -> None:
         _print_findings(result, use_color=sys.stdout.isatty(), suppressed=result.suppressed,
                         show_inconclusive=args.show_inconclusive)
         if reports is not None:
@@ -126,11 +156,28 @@ def cmd_scan(args: argparse.Namespace) -> int:
                     print("[warn] network NOT isolated (--allow-net): the "
                           "sandbox shares the host network — real egress "
                           "is possible")
+
+    if args.json:
+        payload = result.to_dict()
+        if reports is not None:
+            payload["detonations"] = [r.to_dict() for r in reports]
+        if not _emit_stdout(lambda: print(json.dumps(payload, indent=2)),
+                            "the JSON report to stdout"):
+            return 2
+    elif not _emit_stdout(_text_report, "the report to stdout"):
+        return 2
     if args.sarif:
         sarif = to_sarif(result)
-        Path(args.sarif).write_text(json.dumps(sarif, indent=2), encoding="utf-8")
-        if not args.json:
-            print(f"\nSARIF written to {args.sarif}")
+        try:
+            Path(args.sarif).write_text(json.dumps(sarif, indent=2), encoding="utf-8")
+        except OSError as e:  # the report target is part of the input contract too
+            print(f"skillsentinel: error: cannot write the SARIF report to "
+                  f"{args.sarif}: {e}", file=sys.stderr)
+            return 2
+        if not args.json and not _emit_stdout(
+                lambda: print(f"\nSARIF written to {args.sarif}"),
+                "the SARIF confirmation to stdout"):
+            return 2
     if result.limit_reached is not None:
         n, m = result.limit_reached
         print(f"error: limit reached: {n} of {m} files scanned "
