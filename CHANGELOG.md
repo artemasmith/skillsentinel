@@ -38,6 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_version` and `pyproject.toml` all read 0.2.0. Zero runtime dependencies
   unchanged (`dependencies = []`).
 
+### Fixed
+
+- CI self-scan gate: the "Scan repo itself (expect clean)" step now passes
+  `--honor-ignores`, so the repo's own `.skillsentinelignore` (rule catalog,
+  malicious fixtures) applies. The gate had been red since the hardening merge —
+  the tree was never dirty, the flag was missing.
+- `.worktrees/` added to `.gitignore` and `.skillsentinelignore`: agent
+  worktrees are full checkouts and were reported as a second copy of the repo.
+- Release notes for a tag now come from that version's `CHANGELOG.md` section
+  (`body_path`) instead of GitHub's auto-generated commit list.
+
 ## [0.1.0] - 2026-10-09
 
 ### Added

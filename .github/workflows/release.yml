@@ -35,11 +35,24 @@ jobs:
         with:
           name: dist
           path: dist
+      - name: Extract release notes from CHANGELOG
+        run: |
+          python3 - "$GITHUB_REF_NAME" <<'PY'
+          import pathlib, re, sys
+
+          tag = sys.argv[1].removeprefix("v")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          m = re.search(rf"^## \[{re.escape(tag)}\].*?(?=^## \[|\Z)", text, re.S | re.M)
+          if not m:
+              sys.exit(f"CHANGELOG.md has no section for {tag}")
+          pathlib.Path("release_notes.md").write_text(
+              m.group(0).strip() + "\n", encoding="utf-8")
+          PY
       - name: Create GitHub Release with the artifacts
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: release_notes.md
 
   publish:
     needs: [build, release]

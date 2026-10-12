@@ -5,6 +5,7 @@ build/
 dist/
 .venv/
 venv/
+.worktrees/
 .skillsentinel-snapshot.json
 *.sarif
 .coverage

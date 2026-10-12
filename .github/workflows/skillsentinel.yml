@@ -42,7 +42,11 @@ jobs:
             echo "expected exit 1 on malicious fixtures, got $RC"; exit 1
           fi
       - name: Scan repo itself (expect clean)
-        run: python3 -m skillsentinel scan . --severity medium
+        # --honor-ignores is OFF by default so that a scanned skill cannot silence
+        # its own detection. This repo's own tree is trusted, and
+        # .skillsentinelignore (the rule catalog + malicious fixtures) is exactly
+        # the case the flag exists for.
+        run: python3 -m skillsentinel scan . --severity medium --honor-ignores
       - uses: actions/upload-artifact@v4
         if: always()
         with:

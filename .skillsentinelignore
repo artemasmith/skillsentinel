@@ -2,3 +2,6 @@
 # purpose — the scanner must not flag the corpus it is written against.
 tests/
 rules/rules.json
+# Local git worktrees (agent branches) are full checkouts of this repo: scanning
+# them reports this repo's own catalog and fixtures a second time.
+.worktrees/
