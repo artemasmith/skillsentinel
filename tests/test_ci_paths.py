@@ -104,6 +104,36 @@ class InputErrorTests(CliPathsTestBase):
                 self._run("scan", str(tree), "--rules", str(bad)),
                 "invalid --rules file")
 
+    def test_rules_path_is_a_directory_is_a_clean_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            tree = Path(d) / "skill"
+            tree.mkdir()
+            (tree / "ok.sh").write_text("echo fine\n")
+            not_rules = Path(d) / "not-rules"
+            not_rules.mkdir()
+            p = self._run("scan", str(tree), "--rules", str(not_rules))
+            self._assert_clean_error(p, "directory passed to --rules")
+            self.assertIn(
+                str(not_rules), p.stderr,
+                "the error line must name the offending path")
+
+    def test_unwritable_report_target_is_a_clean_error(self):
+        if os.geteuid() == 0:
+            self.skipTest("root can write into chmod-000 directories")
+        with tempfile.TemporaryDirectory() as d:
+            tree = Path(d) / "skill"
+            tree.mkdir()
+            (tree / "ok.sh").write_text("echo fine\n")
+            locked = Path(d) / "locked"
+            locked.mkdir()
+            os.chmod(locked, 0)
+            try:
+                self._assert_clean_error(
+                    self._run("scan", str(tree), "--sarif", str(locked / "out.sarif")),
+                    "unwritable --sarif target")
+            finally:
+                os.chmod(locked, 0o755)  # let TemporaryDirectory clean up
+
 
 class ExitCodeTests(CliPathsTestBase):
     """Criterion 2: 0 clean, 1 confirmed finding, 2 input/IO/rules, 3 internal."""
