@@ -21,6 +21,7 @@ duplicated here.
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -165,6 +166,75 @@ class SandboxKillTests(unittest.TestCase):
         self.assertTrue(
             any("timed out" in n.lower() for n in report.notes),
             f"the timeout must be recorded as an explicit warning note: "
+            f"notes={report.notes}")
+
+
+class SandboxSurvivorTests(unittest.TestCase):
+    """Round 2 (reviewer finding): a detonation timeout must take down the
+    whole sandbox tree, not just the bwrap supervisor.
+
+    detonate.py builds the bwrap argv WITHOUT --unshare-pid, so the payload
+    runs in the host PID namespace; subprocess.run(timeout=...) SIGKILLs only
+    the direct child (bwrap itself), and the payload is left behind as an
+    orphan host process. The payload here is a /bin/sh busy loop (`while true;
+    do :; done` — no sleep binary needed): while it runs, the sh cmdline is
+    `/bin/sh /work/<marker>.sh`, so `pgrep -f <marker>` detects survivors for
+    as long as they live. The marker is unique per run, so strays from earlier
+    runs can never be mistaken for this one's survivors.
+    """
+
+    def _survivors(self, marker):
+        p = subprocess.run(["pgrep", "-f", marker],
+                           capture_output=True, text=True)
+        return [int(pid) for pid in p.stdout.split()]
+
+    def _terminate(self, pids):
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    def test_timed_out_detonation_leaves_no_surviving_payload_process(self):
+        if not shutil.which("bwrap"):
+            self.skipTest("bwrap not available on this host")
+
+        marker = f"sleeper_{os.getpid()}_{time.monotonic_ns()}.sh"
+
+        # stray guard: the marker is unique per run, so this should be clean;
+        # anything matching anyway is terminated and the test skipped
+        strays = self._survivors(marker)
+        if strays:
+            self._terminate(strays)
+            self.skipTest(f"stray processes matching {marker} were terminated "
+                          f"before the run: {strays}")
+
+        with tempfile.TemporaryDirectory() as d:
+            payload = Path(d) / marker
+            payload.write_text("#!/bin/sh\nwhile true; do :; done\n")
+            report = detonate.detonate_file(payload, timeout=2)
+
+        # signal propagation to the sandbox tree can take a moment
+        deadline = time.monotonic() + 3.0
+        survivors = self._survivors(marker)
+        while survivors and time.monotonic() < deadline:
+            time.sleep(0.2)
+            survivors = self._survivors(marker)
+
+        # clean up whatever is left so a RED run leaves no spinning orphan;
+        # the assertion below judges the captured list, not the post-cleanup
+        # state
+        self._terminate(survivors)
+
+        self.assertEqual(
+            survivors, [],
+            f"the payload process survived the detonation timeout: pids "
+            f"{survivors} still match '{marker}' after bwrap was killed — "
+            f"the whole sandbox tree must die with the timeout, not just the "
+            f"bwrap supervisor")
+        self.assertTrue(
+            any("timed out" in n.lower() for n in report.notes),
+            f"the timeout must still be recorded as a warning note: "
             f"notes={report.notes}")
 
 
