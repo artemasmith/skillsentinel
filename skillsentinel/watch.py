@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
-from .scanner import _iter_target_files, sha256_file
+from .scanner import sha256_file
 
 SNAPSHOT_VERSION = 1
 
@@ -18,10 +19,26 @@ class Entry:
     size: int
 
 
+def _iter_snapshot_files(root: Path) -> Iterable[Path]:
+    """Every file in the tree except `.git/`.
+
+    Deliberately no suffix filter and no skip list, unlike the scanner's
+    walker: a snapshot that only watches "interesting" files is a rug-pull
+    tunnel — `node_modules/`, `.venv/` and binary blobs must be hashed too.
+    `.git/` alone is excluded: it is repo machinery that rewrites itself on
+    every commit and would drown every diff in noise.
+    """
+    for p in sorted(root.rglob("*")):
+        if ".git" in p.relative_to(root).parts:
+            continue
+        if p.is_file():  # follows symlinks; a broken link has nothing to hash
+            yield p
+
+
 def snapshot_dir(root: Path) -> dict:
     root = root.resolve()
     entries = []
-    for p in _iter_target_files(root):
+    for p in _iter_snapshot_files(root):
         try:
             entries.append(Entry(str(p.relative_to(root)), sha256_file(p), p.stat().st_size))
         except OSError:

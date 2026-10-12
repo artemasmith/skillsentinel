@@ -11,11 +11,20 @@ from pathlib import Path
 from . import __version__
 from .detonate import detonate_tree
 from .rules import load_rules, SEVERITY_ORDER
-from .scanner import scan_path, to_sarif
+from .scanner import InputError, scan_path, to_sarif
 from .verifier import VERIFIERS_BY_NAME
 from .watch import write_snapshot, load_snapshot, diff_snapshots, snapshot_dir
 
 SEV_EXIT: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+# `scan --help` must state the contract a CI pipeline relies on.
+EXIT_CODES_EPILOG = """\
+exit codes:
+  0  clean — no confirmed findings
+  1  at least one confirmed finding at/above the --severity threshold
+  2  input error: missing or unreadable path, invalid --rules, a .skillsentinelignore
+     pattern that ignores the whole skill, --timeout expiry, --max-files limit reached
+  3  internal error — a bug, please report it"""
 
 SEV_COLOR = {
     "critical": "\033[91m", "high": "\033[31m",
@@ -73,10 +82,16 @@ def load_ignore_file(root: Path) -> list[str]:
 
 def cmd_scan(args: argparse.Namespace) -> int:
     root = Path(args.path).expanduser()
-    exclude = list(args.exclude) + load_ignore_file(root)
+    # `.skillsentinelignore` is input from the scanned tree, so it is trusted
+    # only under --honor-ignores — exactly like inline suppression markers.
+    ignore_patterns = load_ignore_file(root) if args.honor_ignores else []
     result = scan_path(args.path, args.rules,
-                       honor_ignores=args.honor_ignores, exclude=exclude,
-                       profile=args.profile)
+                       honor_ignores=args.honor_ignores,
+                       exclude=list(args.exclude),
+                       ignore_patterns=ignore_patterns,
+                       profile=args.profile,
+                       timeout=args.timeout,
+                       max_files=args.max_files)
     if args.json:
         payload = result.to_dict()
         if args.detonate:
@@ -99,6 +114,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
         Path(args.sarif).write_text(json.dumps(sarif, indent=2), encoding="utf-8")
         if not args.json:
             print(f"\nSARIF written to {args.sarif}")
+    if result.limit_reached is not None:
+        n, m = result.limit_reached
+        print(f"error: limit reached: {n} of {m} files scanned "
+              f"(raise --max-files to see the rest)", file=sys.stderr)
+        return 2
     threshold = SEVERITY_ORDER[args.severity]
     return 1 if result.max_severity_rank() >= threshold else 0
 
@@ -116,7 +136,10 @@ def cmd_watch(args: argparse.Namespace) -> int:
             print(f"error: snapshot not found: {snap_path} — run `watch init` first",
                   file=sys.stderr)
             return 2
-        old = load_snapshot(snap_path)
+        try:
+            old = load_snapshot(snap_path)
+        except (OSError, ValueError) as e:
+            raise InputError(f"cannot read snapshot {snap_path}: {e}") from None
         new = snapshot_dir(root)
         d = diff_snapshots(old, new)
         if d["clean"]:
@@ -132,7 +155,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_rules(args: argparse.Namespace) -> int:
-    rules = load_rules(args.rules)
+    try:
+        rules = load_rules(args.rules)
+    except (OSError, ValueError) as e:
+        raise InputError(
+            f"cannot load rules from {args.rules or 'the built-in catalog'}: {e}") from None
     if args.json:
         print(json.dumps({
             "count": len(rules),
@@ -155,7 +182,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"skillsentinel {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("scan", help="scan a skill file or directory")
+    s = sub.add_parser("scan", help="scan a skill file or directory",
+                       epilog=EXIT_CODES_EPILOG,
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
     s.add_argument("path", help="file or directory to scan")
     s.add_argument("--json", action="store_true", help="machine-readable JSON output")
     s.add_argument("--sarif", metavar="OUT.sarif", help="also write SARIF 2.1.0 report")
@@ -166,11 +195,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="verification strictness: strict / balanced (default) / loose / "
                         "paranoid — controls how many candidates survive to findings")
     s.add_argument("--honor-ignores", action="store_true",
-                   help="honor inline `skillsentinel:ignore` markers (OFF by default: "
-                        "a scanned file must not be able to silence its own detection)")
+                   help="honor inline `skillsentinel:ignore` markers and "
+                        "`.skillsentinelignore` patterns (OFF by default: a scanned "
+                        "file must not be able to silence its own detection)")
     s.add_argument("--exclude", action="append", default=[], metavar="GLOB",
-                   help="skip files matching this glob (repeatable); also read from "
-                        ".skillsentinelignore in the scanned directory")
+                   help="skip files matching this glob (repeatable)")
+    s.add_argument("--timeout", type=float, default=None, metavar="SEC",
+                   help="abort the scan after SEC seconds and exit 2 (0 disables); "
+                        "protects CI against pathological trees")
+    s.add_argument("--max-files", type=int, default=None, metavar="N",
+                   help="scan at most N files, then exit 2 with a limit report; "
+                        "bounds huge trees without silently ignoring the rest")
     s.add_argument("--detonate", action="store_true",
                    help="run discovered scripts in a disposable bwrap sandbox "
                         "(requires bubblewrap; skipped with a notice otherwise)")
@@ -196,7 +231,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except InputError as e:
+        print(f"skillsentinel: error: {e}", file=sys.stderr)
+        return 2
+    except OSError as e:
+        # IO trouble reaching the input (vanished path, unreadable file): the
+        # scan target's problem, not the scanner's — still exit 2, one line.
+        print(f"skillsentinel: error: {e}", file=sys.stderr)
+        return 2
+    except Exception as e:  # noqa: BLE001 — the CLI boundary turns bugs into exit 3
+        print(f"skillsentinel: internal error: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ What the verifier actually decides on: is the line a directive to an agent, code
 
 The tradeoff is deliberate: some hostile lines will be demoted and some benign ones confirmed — it is a heuristic. That is why every demotion is reported with a reason instead of hidden, and why `benign-hard` (below) is part of the test suite.
 
-Suppression is deliberately *not* available to the artifact: inline `skillsentinel:ignore` markers are read **only** under `--honor-ignores`. By default a scanned file cannot silence its own detection.
+Suppression is deliberately *not* available to the artifact: inline `skillsentinel:ignore` markers and `.skillsentinelignore` patterns are read **only** under `--honor-ignores` (which then also lists what was skipped in the JSON `ignored_files` field; a pattern that would ignore the whole skill — `*`, `**`, `**/*` — is refused with exit 2 instead of producing an empty "clean" scan). By default a scanned file cannot silence its own detection.
 
 ## Quickstart
 
@@ -54,6 +54,17 @@ python3 -m skillsentinel watch init ~/.claude/skills && python3 -m skillsentinel
 ```
 
 Exit code `1` when findings meet the severity threshold — drop it straight into CI.
+
+## Exit codes
+
+| code | meaning |
+|------|---------|
+| 0 | clean — no confirmed findings |
+| 1 | at least one confirmed finding at/above the `--severity` threshold |
+| 2 | input error: missing or unreadable path, invalid `--rules`, a whole-skill `.skillsentinelignore` pattern, `--timeout` expiry, or the `--max-files` limit |
+| 3 | internal error — a bug, please report it |
+
+Every error is one line on stderr, never a traceback. Two flags bound runaway trees without silently ignoring anything: `--timeout SEC` aborts with `timed out after SEC s` (exit 2), `--max-files N` scans the first N files, reports `limit reached: N of M files` and exits 2. Oversize files (> 2 MB) are scanned as head + tail 512 KB windows and marked `"truncated": true` in the JSON rather than skipped.
 
 ## Demo
 
@@ -171,11 +182,14 @@ Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/wor
 ```
 scan <path> [--json] [--sarif OUT] [--severity SEV] [--profile P] [--exclude GLOB]
            [--honor-ignores] [--detonate] [--rules rules.json]
+           [--timeout SEC] [--max-files N]
 watch init <dir> [--snapshot FILE]   record SHA-256 snapshot
 watch diff <dir> [--snapshot FILE]   exit 1 on any drift (rug-pull)
 watch show <dir>                     print current snapshot
 rules [--json]                       list all detection rules
 ```
+
+Exit codes 0/1/2/3 are documented above and in `scan --help`.
 
 Run as `python3 -m skillsentinel ...` or `pip install .` for the `skillsentinel` entry point.
 
@@ -193,7 +207,7 @@ Pure Python stdlib (`re`, `json`, `hashlib`, `argparse`, `subprocess`, `pathlib`
 ## Testing & contributing
 
 ```bash
-python3 -m unittest discover -s tests -v   # 32 tests
+python3 -m unittest discover -s tests -v   # 61 tests
 ```
 
 Fixtures: 10 malicious skills (real attack patterns, inert payloads), 6 clean skills, and a **`benign-hard` corpus of the false positives this scanner actually produced** while being built — a fenced install command, a legit SSH backup, a detection-signature table, a systemd deploy, a script reading the user's own saved password. All three sets are asserted: every malicious directory flagged, zero findings on both benign sets, every demotion carrying a reason.
