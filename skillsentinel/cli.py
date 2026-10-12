@@ -46,6 +46,8 @@ def _park_stdout_on_devnull() -> None:
     shutdown flush of the leftover buffer cannot re-raise — without this a
     broken pipe turns into an "Exception ignored" dump and rc=120. Call only
     after the real error line is already on stderr."""
+    if sys.stdout is None:
+        return  # no stdout buffer was ever created — nothing to re-point or flush
     try:
         null = os.open(os.devnull, os.O_WRONLY)
     except OSError:  # nothing to hide the failure behind: best effort only
@@ -60,9 +62,17 @@ def _park_stdout_on_devnull() -> None:
 
 def _emit_stdout(emit: Callable[[], None], what: str) -> bool:
     """Run a stdout-writing report block AND flush it here, so a stdout that
-    cannot be written (closed pipe, full device) fails now as one clean error
-    naming the output — not at interpreter shutdown. Returns False after
-    printing that line and muting fd 1 (see _park_stdout_on_devnull)."""
+    cannot be written (closed pipe, full device, fd 1 closed at exec so
+    sys.stdout is None) fails now as one clean error naming the output — not
+    at interpreter shutdown. Returns False after printing that line and
+    muting fd 1 (see _park_stdout_on_devnull)."""
+    if sys.stdout is None:
+        # fd 1 was closed before the interpreter started: print() discards
+        # silently, so treat the missing stream exactly like an unwritable
+        # one — an output error, not an internal one.
+        print(f"skillsentinel: error: cannot write {what}: stdout is closed "
+              f"(fd 1 was closed at startup)", file=sys.stderr)
+        return False
     try:
         emit()
         sys.stdout.flush()
@@ -142,7 +152,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
             print(f"detonation refused: {e}", file=sys.stderr)
             return 2
     def _text_report() -> None:
-        _print_findings(result, use_color=sys.stdout.isatty(), suppressed=result.suppressed,
+        _print_findings(result, use_color=sys.stdout is not None and sys.stdout.isatty(),
+                        suppressed=result.suppressed,
                         show_inconclusive=args.show_inconclusive)
         if reports is not None:
             print(f"\n-- Detonation ({len(reports)} scripts) --")
