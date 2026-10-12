@@ -102,7 +102,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     reports = None
     if args.detonate:
         try:
-            reports = detonate_tree(Path(args.path), allow_net=args.allow_net)
+            reports = detonate_tree(Path(args.path), allow_net=args.allow_net,
+                                    timeout=args.detonate_timeout)
         except DetonationRefusedError as e:
             print(f"detonation refused: {e}", file=sys.stderr)
             return 2
@@ -122,6 +123,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
                     continue
                 net = ", ".join(r.network_attempts) or "none observed"
                 print(f"[ran ] {r.file}  exit={r.exit_code}  egress: {net}")
+                for n in r.notes:
+                    if "timed out" in n.lower():
+                        print(f"[warn] {r.file}: {n}")
                 if any("network NOT isolated" in n for n in r.notes):
                     print("[warn] network NOT isolated (--allow-net): the "
                           "sandbox shares the host network — real egress "
@@ -242,6 +246,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="with --detonate: lift network isolation — the sandbox "
                         "CAN open real connections (each detonation prints a "
                         "'network NOT isolated' warning)")
+    s.add_argument("--detonate-timeout", type=int, default=10, metavar="SEC",
+                   help="with --detonate: kill each sandboxed script after SEC "
+                        "seconds and record a timeout warning (default: 10)")
     s.add_argument("--show-inconclusive", action="store_true",
                    help="also list candidates the verifier graded inconclusive "
                         "(unknown context) with their file:line and reason")

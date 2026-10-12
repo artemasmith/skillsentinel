@@ -151,16 +151,21 @@ def detonate_file(path: Path, timeout: int = 10,
             "HOME": "/home/sandbox",
             "SANDBOX_NETLOG": "/netlog.txt",
         }
+        timeout_note = None
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout, env=env,
             )
             rc, out, err = proc.returncode, proc.stdout, proc.stderr
         except subprocess.TimeoutExpired as e:
+            # the sandbox was killed at the deadline — recorded as a warning,
+            # never propagated: one runaway script must not end the run
             rc = None
             out = (e.stdout or "")
             out = out.decode() if isinstance(out, bytes) else out
             err = "detonation timed out"
+            timeout_note = (f"detonation timed out after {timeout} s — the "
+                            "script was killed; scanning continues")
         except OSError as e:
             return DetonationReport(
                 file=str(path), executed=False, sandbox="bwrap",
@@ -179,15 +184,20 @@ def detonate_file(path: Path, timeout: int = 10,
         else:
             net_note = ("network isolated (--unshare-net): no connection can be "
                         "opened from inside the sandbox")
+        notes = [net_note,
+                 "attempted tool egress is logged via PATH shims "
+                 "(curl/wget/nc/ssh/...)"]
+        if timeout_note is not None:
+            notes.append(timeout_note)
         return DetonationReport(
             file=str(path), executed=True, sandbox="bwrap",
             exit_code=rc, stdout_tail=o, stderr_tail=e2,
             network_attempts=attempts,
-            notes=[net_note,
-                   "attempted tool egress is logged via PATH shims "
-                   "(curl/wget/nc/ssh/...)"],
+            notes=notes,
         )
 
 
-def detonate_tree(root: Path, allow_net: bool = False) -> list[DetonationReport]:
-    return [detonate_file(p, allow_net=allow_net) for p in find_scripts(root)]
+def detonate_tree(root: Path, allow_net: bool = False,
+                  timeout: int = 10) -> list[DetonationReport]:
+    return [detonate_file(p, timeout=timeout, allow_net=allow_net)
+            for p in find_scripts(root)]
