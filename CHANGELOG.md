@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-12
+
+### Added
+
+- `watch diff --rescan`: re-scan the changed/added files of a drift and print
+  their confirmed findings (`skillsentinel.watch.rescan_changes(root, diff)`) —
+  drift output now explains WHAT changed, not only that something did. Exit
+  codes unchanged: any drift is still exit 1, a clean tree 0.
+- Version identity in machine output: `scan --json` carries top-level
+  `version` (scanner) and `rules_version` (the catalog's `_version`); SARIF
+  `tool.driver.version` names the exact scanner build.
+- Release pipeline (`.github/workflows/release.yml`), triggered only by `v*`
+  tags: builds sdist + wheel, attaches them to a GitHub Release, and publishes
+  to PyPI only when the `PYPI_API_TOKEN` secret is set — without the token the
+  workflow still succeeds, printing that publish was skipped.
+- CI now uploads `scan.sarif` to the GitHub Security tab via
+  `github/codeql-action/upload-sarif@v3` (`if: always()`, so findings are
+  reported even when the fail-closed scan step fails); the RC==1 check on the
+  malicious fixtures is unchanged.
+- pre-commit integration: `.pre-commit-hooks.yaml` defines the `skillsentinel`
+  hook (repo-root scan, non-zero exit on confirmed findings).
+- README: Install section (`pipx install skillsentinel` /
+  `pip install git+https://…`), an exit-code table (0/1/2/3), a pre-commit
+  usage section, and the GitHub Action usage pinned to a version tag instead
+  of `@main`.
+- `[project.urls]`: Changelog and Issues.
+
+### Changed
+
+- One version everywhere: `skillsentinel.__version__`, `rules.json`
+  `_version` and `pyproject.toml` all read 0.2.0. Zero runtime dependencies
+  unchanged (`dependencies = []`).
+
 ## [0.1.0] - 2026-10-09
 
 ### Added

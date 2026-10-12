@@ -9,7 +9,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterable
 
-from .rules import Rule, load_rules, SEVERITY_ORDER
+from . import __version__
+from .rules import RULES_PATH, Rule, load_rules, SEVERITY_ORDER
 from .verifier import (VERDICT_ORDER, VERIFIERS_BY_NAME, bind_rules,
                        verify_findings)
 
@@ -35,6 +36,20 @@ KEY_FILENAMES = {
 # plain text and everything is reported.
 NOQA = "skillsentinel:ignore"
 NOQA_FILE = "skillsentinel:ignore-file"
+
+_rules_version_cache: str | None = None
+
+
+def rules_version() -> str:
+    """The catalog's own `_version` key (rules/rules.json), read once per process."""
+    global _rules_version_cache
+    if _rules_version_cache is None:
+        try:
+            _rules_version_cache = json.loads(
+                RULES_PATH.read_text(encoding="utf-8")).get("_version", "")
+        except (OSError, json.JSONDecodeError):
+            _rules_version_cache = ""
+    return _rules_version_cache
 
 
 @dataclass
@@ -84,6 +99,8 @@ class ScanResult:
 
     def to_dict(self) -> dict:
         return {
+            "version": __version__,
+            "rules_version": rules_version(),
             "path": self.path,
             "profile": self.profile,
             "files_scanned": self.files_scanned,
@@ -247,6 +264,7 @@ def to_sarif(result: ScanResult, rules: list[Rule] | None = None) -> dict:
         "runs": [{
             "tool": {"driver": {
                 "name": "SkillSentinel",
+                "version": __version__,
                 "informationUri": "https://github.com/artemasmith/skillsentinel",
                 "rules": [{
                     "id": r.id, "name": r.id,
