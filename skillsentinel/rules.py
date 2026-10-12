@@ -73,10 +73,18 @@ class Rule:
 def _re(raw: Any, default_flags: int = re.IGNORECASE) -> Pattern[str] | None:
     if not raw:
         return None
-    return re.compile(raw, default_flags)
+    try:
+        return re.compile(raw, default_flags)
+    except (re.error, TypeError) as e:
+        # re.PatternError is not a ValueError: without this wrap a bad regex
+        # in the catalog escapes as an "internal error" instead of a bad input.
+        raise ValueError(f"invalid regex {raw!r}: {e}") from None
 
 
 def _compile(raw: dict[str, Any]) -> Rule:
+    for key in ("id", "title", "category", "severity"):
+        if key not in raw:
+            raise ValueError(f"rule entry is missing required key {key!r}")
     flags = 0
     if raw.get("ignore_case", True):
         flags |= re.IGNORECASE
@@ -107,7 +115,19 @@ def _compile(raw: dict[str, Any]) -> Rule:
 def load_rules(path: Path | str | None = None) -> list[Rule]:
     p = Path(path) if path else RULES_PATH
     data = json.loads(p.read_text(encoding="utf-8"))
-    rules = [_compile(r) for r in data["rules"]]
+    # A valid-JSON document of the wrong shape is a bad input file, not a bug:
+    # every shape/regex problem here is ValueError, which both call sites wrap
+    # into an input error naming the path (exit 2) — never KeyError/TypeError
+    # leaking as "internal error" exit 3.
+    if not isinstance(data, dict) or not isinstance(data.get("rules"), list):
+        raise ValueError("not a rules catalog: expected an object "
+                         "with a 'rules' array")
+    rules = []
+    for i, raw in enumerate(data["rules"]):
+        if not isinstance(raw, dict):
+            raise ValueError(f"rule #{i}: expected an object, "
+                             f"got {type(raw).__name__}")
+        rules.append(_compile(raw))
     ids = [r.id for r in rules]
     if len(ids) != len(set(ids)):
         dupes = {i for i in ids if ids.count(i) > 1}
