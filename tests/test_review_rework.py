@@ -60,7 +60,7 @@ class ReworkTestBase(unittest.TestCase):
             p.returncode, 2,
             f"{what}: expected exit 2, got {p.returncode}\nstderr:\n{p.stderr}")
         self.assertNotIn(
-            "Traceback", p.stderr + p.stdout,
+            "Traceback", p.stderr + (p.stdout or ""),
             f"{what}: crashed with a traceback instead of a clean error")
         self.assertNotIn(
             "Exception ignored", p.stderr,
