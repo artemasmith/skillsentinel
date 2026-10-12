@@ -103,8 +103,9 @@ class VerifierConfig:
     drop_self_described_examples: bool = True
     # A rule scoped to `directive` must not fire on a code file.
     enforce_context: bool = True
-    # `strict`: every candidate the verifier would soften to low_trust/inconclusive
-    # is confirmed instead — a demotion is a judgement, and strict declines it.
+    # `strict`: every candidate the verifier would soften — low_trust, capability,
+    # inconclusive — is confirmed instead; a demotion is a judgement, and strict
+    # declines all of them, leaving `demoted` empty.
     disable_demotions: bool = False
 
 
@@ -308,7 +309,7 @@ def verify_findings(findings: list, sources: dict[str, str],
         verdict, reason = _reason_for(rule, ctx, line, raw, cfg, fence, escalates)
         if verdict == "low_trust" and not cfg.drop_self_described_examples:
             verdict, reason = "inconclusive", reason + " (kept: profile keeps weak hits)"
-        if cfg.disable_demotions and verdict in ("low_trust", "inconclusive"):
+        if cfg.disable_demotions and verdict != "exploitable":
             verdict, reason = "exploitable", reason + " (confirmed: strict profile disables demotions)"
         out.append(Verdict(f.file, f.line, f.rule_id, verdict, reason, f.snippet))
     out.sort(key=lambda v: (-VERDICT_ORDER[v.verdict], v.file, v.rule_id, v.line))

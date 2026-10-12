@@ -170,8 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="exit 1 only for findings at/above this severity (default: low)")
     s.add_argument("--rules", help="path to alternative rules.json")
     s.add_argument("--profile", choices=list(VERIFIERS_BY_NAME), default="balanced",
-                   help="verification strictness: strict (no demotions — every softened "
-                        "candidate is confirmed) / balanced (default) / loose / paranoid")
+                   help="verification strictness: strict (every candidate confirmed, "
+                        "demoted is empty) / balanced (default) / loose / paranoid")
     s.add_argument("--honor-ignores", action="store_true",
                    help="honor inline `skillsentinel:ignore` markers (OFF by default: "
                         "a scanned file must not be able to silence its own detection)")

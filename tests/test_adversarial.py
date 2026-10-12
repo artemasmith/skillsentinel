@@ -114,13 +114,17 @@ class UnicodeSmugglingTests(unittest.TestCase):
 class StrictProfileTests(unittest.TestCase):
     """AC4 — strict disables verifier demotions and must differ from balanced.
 
-    Today strict and balanced are bit-identical configs, and ScanResult.to_dict
-    carries no `profile_variant` — both assertions are red.
+    Strict confirms ALL candidates (demoted is empty — no verdict class is
+    exempt), a strict superset of balanced; ScanResult.to_dict carries
+    `profile_variant`.
     """
 
     def test_strict_confirms_more_than_balanced(self):
         strict = scan_path(ADV, profile="strict")
         balanced = scan_path(ADV, profile="balanced")
+        self.assertEqual(strict.demoted, [],
+                         "strict must not demote anything: "
+                         f"{[(f.rule_id, f.file, f.line, f.verdict) for f in strict.demoted]}")
         ks = {(f.file, f.line, f.rule_id) for f in strict.confirmed()}
         kb = {(f.file, f.line, f.rule_id) for f in balanced.confirmed()}
         self.assertNotEqual(ks, kb, "strict and balanced confirm the same set")
