@@ -1,7 +1,7 @@
 """Acceptance tests (RED phase) for review rework — card t_e34552bf, round 1 run 26.
 
 These tests define the contract for the green phase. They FAIL at ecb0cb4 on
-purpose; they must not be weakened to pass. Two criteria:
+purpose; they must not be weakened to pass. Three criteria:
 
 - R1 broken stdout: `scan --json` whose stdout cannot be written (reader closed
   the pipe, or /dev/full) must exit 2 with exactly one stderr line that names
@@ -13,6 +13,11 @@ purpose; they must not be weakened to pass. Two criteria:
   invalid regex in a rule's "pattern") must be an input error (exit 2, one
   stderr line naming the --rules path, no traceback) for BOTH `scan` and
   `rules` — not an "internal error" exit 3.
+- R3 stdout closed at exec: `scan` started with file descriptor 1 already
+  closed (Python then sets sys.stdout to None), both in --json mode and in
+  text mode, must exit 2 with exactly one stderr line naming stdout — no
+  "internal error: AttributeError ... flush/isatty", no traceback, no
+  interpreter "Exception ignored" shutdown dump.
 """
 
 import json
@@ -147,6 +152,41 @@ class BadRulesShapeTests(ReworkTestBase):
                     "internal error", line.lower(),
                     "a wrong-shape rules document is an input error, "
                     "not an internal error")
+
+
+class ClosedStdoutAtExecTests(ReworkTestBase):
+    """R3: `scan` started with fd 1 closed at exec (sys.stdout is None)
+    reports a clean stdout error in BOTH --json and text mode."""
+
+    def _run_fd1_closed(self, *argv):
+        # stdout=None means "inherit" — subprocess never re-points fd 1, so
+        # closing it in preexec_fn (which runs in the child before exec)
+        # survives into the exec'd interpreter: Python finds fd 1 closed and
+        # sets sys.stdout to None. stderr is captured as usual.
+        return subprocess.run(
+            [sys.executable, "-m", "skillsentinel", *argv],
+            stdout=None, stderr=subprocess.PIPE, text=True, cwd=REPO,
+            timeout=60, preexec_fn=lambda: os.close(1))
+
+    def test_json_mode_fd1_closed_at_exec_is_a_clean_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "evil.sh").write_text(PAYLOAD)
+            p = self._run_fd1_closed("scan", str(d), "--json")
+        line = self._assert_clean_error(
+            p, "scan --json with fd 1 closed at exec")
+        self.assertIn(
+            "stdout", line.lower(),
+            f"the error line must name the failing output (stdout): {line!r}")
+
+    def test_text_mode_fd1_closed_at_exec_is_a_clean_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "evil.sh").write_text(PAYLOAD)
+            p = self._run_fd1_closed("scan", str(d))
+        line = self._assert_clean_error(
+            p, "scan text mode with fd 1 closed at exec")
+        self.assertIn(
+            "stdout", line.lower(),
+            f"the error line must name the failing output (stdout): {line!r}")
 
 
 if __name__ == "__main__":
