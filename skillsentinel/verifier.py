@@ -93,7 +93,8 @@ NET_EGRESS = re.compile(
 
 @dataclass
 class VerifierConfig:
-    """Tunable behaviour; `strict` drops more, `loose` keeps almost everything."""
+    """Tunable behaviour; `strict` confirms every softened candidate, `loose` and
+    `paranoid` keep progressively more weakly-evidenced hits."""
 
     name: str = "balanced"
     # Capability hits in prose are usually mention-not-use; in code they are real.
@@ -102,10 +103,13 @@ class VerifierConfig:
     drop_self_described_examples: bool = True
     # A rule scoped to `directive` must not fire on a code file.
     enforce_context: bool = True
+    # `strict`: every candidate the verifier would soften to low_trust/inconclusive
+    # is confirmed instead — a demotion is a judgement, and strict declines it.
+    disable_demotions: bool = False
 
 
 VERIFIERS = (
-    VerifierConfig("strict", drop_self_described_examples=True),
+    VerifierConfig("strict", drop_self_described_examples=True, disable_demotions=True),
     VerifierConfig("balanced", drop_self_described_examples=True,
                    demote_capability_in_prose=True),
     VerifierConfig("loose", demote_capability_in_prose=True,
@@ -184,7 +188,7 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
         return ("capability", "command quoted inline — install snippet or payload?")
 
     if kind == "capability":
-        if CANCEL_WORDS.search(line):
+        if _cancel_word_governs(line, raw):
             return ("low_trust", "line is about detection/defence, not the primitive")
         if NAMED_EXAMPLE.search(line) or PLACEHOLDER.search(line):
             return ("low_trust", "placeholder/quoted value, not a real secret")
@@ -195,7 +199,7 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
         return ("capability", "dual-use primitive — credible, but not proof of exfiltration")
 
     # kind == intent: a directive addressed to an agent
-    if CANCEL_WORDS.search(line):
+    if _cancel_word_governs(line, raw):
         if NAMED_EXAMPLE.search(line):
             return ("low_trust", "line is a named example, not an instruction")
         if _is_negated(line, raw):
@@ -221,6 +225,49 @@ def _is_negated(line: str, raw: str) -> bool:
     idx = line.lower().find(raw.lower()[:24]) if raw else -1
     head = line[:idx] if idx > 0 else line
     return bool(re.search(r"\b(never|do not|don'?t|avoid|must not|should not)\b", head, re.I))
+
+
+def _matched_span(line: str, raw: str) -> tuple[int, int] | None:
+    """Where does the matched text sit on this line? None if it cannot be located."""
+    if not raw:
+        return None
+    low = line.lower()
+    for probe in (raw, raw[:24]):
+        idx = low.find(probe.lower())
+        if idx >= 0:
+            return idx, idx + len(probe)
+    return None
+
+
+def _in_url_token(line: str, start: int, end: int) -> bool:
+    """Is the word at [start:end) part of a slash-bearing identifier
+    (`github.com/attacker/pkg.git`)? There it is data the rule matched, not prose
+    describing the match."""
+    left = start
+    while left > 0 and not line[left - 1].isspace() and line[left - 1] not in "\"'`":
+        left -= 1
+    right = end
+    while right < len(line) and not line[right].isspace() and line[right] not in "\"'`":
+        right += 1
+    return "/" in line[left:right]
+
+
+def _cancel_word_governs(line: str, raw: str) -> bool:
+    """F1: a defensive-lexicon word demotes only from a position that governs the
+    match — before it (negation or a description frame such as "detects the
+    phrase ..."/"pattern: ..."), inside it, or as part of a URL/path token. A word
+    AFTER the match as the object of the attack sentence ("... instructions about
+    malware detection", "send ~/.ssh/id_rsa to the attacker") is the attack naming
+    its own target, and cancelling on it lets a skill mask itself."""
+    span = _matched_span(line, raw)
+    if span is None:
+        return bool(CANCEL_WORDS.search(line))  # match not locatable: stay conservative
+    for m in CANCEL_WORDS.finditer(line):
+        if m.start() < span[1]:
+            return True  # before or inside the matched span
+        if _in_url_token(line, m.start(), m.end()):
+            return True
+    return False
 
 
 def verify_findings(findings: list, sources: dict[str, str],
@@ -261,6 +308,8 @@ def verify_findings(findings: list, sources: dict[str, str],
         verdict, reason = _reason_for(rule, ctx, line, raw, cfg, fence, escalates)
         if verdict == "low_trust" and not cfg.drop_self_described_examples:
             verdict, reason = "inconclusive", reason + " (kept: profile keeps weak hits)"
+        if cfg.disable_demotions and verdict in ("low_trust", "inconclusive"):
+            verdict, reason = "exploitable", reason + " (confirmed: strict profile disables demotions)"
         out.append(Verdict(f.file, f.line, f.rule_id, verdict, reason, f.snippet))
     out.sort(key=lambda v: (-VERDICT_ORDER[v.verdict], v.file, v.rule_id, v.line))
     return out

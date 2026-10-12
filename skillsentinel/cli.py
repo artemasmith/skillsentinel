@@ -29,10 +29,12 @@ def _colorized(s: str, sev: str, enabled: bool) -> str:
     return f"{SEV_COLOR[sev]}{s}{SEV_COLOR['end']}"
 
 
-def _print_findings(result, use_color: bool, suppressed: int = 0) -> None:
+def _print_findings(result, use_color: bool, suppressed: int = 0,
+                    show_inconclusive: bool = False) -> None:
     c = result.counts
     total = sum(c.values())
     dropped = len(result.demoted)
+    inconclusive = [f for f in result.demoted if f.verdict == "inconclusive"]
     print(f"SkillSentinel v{__version__} — scanned {result.path} "
           f"({result.files_scanned} files, {result.files_skipped} skipped, "
           f"profile: {result.profile})")
@@ -41,22 +43,26 @@ def _print_findings(result, use_color: bool, suppressed: int = 0) -> None:
         if dropped:
             note += f"; {dropped} candidate(s) demoted — see --json for reasons"
         print(f"No exploitable findings. Supply chain looks clean. ✓{note}")
-        return
-    print(f"Confirmed findings: {total} "
-          f"(critical: {c['critical']}, high: {c['high']}, "
-          f"medium: {c['medium']}, low: {c['low']})"
-          + (f" — {suppressed} suppressed by inline markers" if suppressed else "")
-          + (f"; {dropped} candidate(s) demoted" if dropped else ""))
-    cur = None
-    for f in result.findings:
-        if f.severity != cur:
-            cur = f.severity
-            print(_colorized(f"\n== {cur.upper()} ==", cur, use_color))
-        print(_colorized(f"[{f.rule_id}] {f.file}:{f.line}", cur, use_color)
-              + (f"  (x{f.count})" if f.count > 1 else "")
-              + f"  {f.title}")
-        print(f"    {f.snippet[:160]}")
-        print(f"    verdict: {f.verdict} — {f.reason}")
+    else:
+        print(f"Confirmed findings: {total} "
+              f"(critical: {c['critical']}, high: {c['high']}, "
+              f"medium: {c['medium']}, low: {c['low']})"
+              + (f" — {suppressed} suppressed by inline markers" if suppressed else "")
+              + (f"; {dropped} candidate(s) demoted" if dropped else ""))
+        cur = None
+        for f in result.findings:
+            if f.severity != cur:
+                cur = f.severity
+                print(_colorized(f"\n== {cur.upper()} ==", cur, use_color))
+            print(_colorized(f"[{f.rule_id}] {f.file}:{f.line}", cur, use_color)
+                  + (f"  (x{f.count})" if f.count > 1 else "")
+                  + f"  {f.title}")
+            print(f"    {f.snippet[:160]}")
+            print(f"    verdict: {f.verdict} — {f.reason}")
+    if show_inconclusive or inconclusive:
+        print(f"\n{len(inconclusive)} inconclusive candidate(s):")
+        for f in inconclusive:
+            print(f"  [{f.rule_id}] {f.file}:{f.line} — {f.reason}")
 
 
 def load_ignore_file(root: Path) -> list[str]:
@@ -84,7 +90,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
             payload["detonations"] = [r.to_dict() for r in reports]
         print(json.dumps(payload, indent=2))
     else:
-        _print_findings(result, use_color=sys.stdout.isatty(), suppressed=result.suppressed)
+        _print_findings(result, use_color=sys.stdout.isatty(), suppressed=result.suppressed,
+                        show_inconclusive=args.show_inconclusive)
         if args.detonate:
             reports = detonate_tree(Path(args.path))
             print(f"\n-- Detonation ({len(reports)} scripts) --")
@@ -163,8 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="exit 1 only for findings at/above this severity (default: low)")
     s.add_argument("--rules", help="path to alternative rules.json")
     s.add_argument("--profile", choices=list(VERIFIERS_BY_NAME), default="balanced",
-                   help="verification strictness: strict / balanced (default) / loose / "
-                        "paranoid — controls how many candidates survive to findings")
+                   help="verification strictness: strict (no demotions — every softened "
+                        "candidate is confirmed) / balanced (default) / loose / paranoid")
     s.add_argument("--honor-ignores", action="store_true",
                    help="honor inline `skillsentinel:ignore` markers (OFF by default: "
                         "a scanned file must not be able to silence its own detection)")
@@ -174,6 +181,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--detonate", action="store_true",
                    help="run discovered scripts in a disposable bwrap sandbox "
                         "(requires bubblewrap; skipped with a notice otherwise)")
+    s.add_argument("--show-inconclusive", action="store_true",
+                   help="also list candidates the verifier graded inconclusive "
+                        "(unknown context) with their file:line and reason")
     s.set_defaults(func=cmd_scan)
 
     w = sub.add_parser("watch", help="snapshot installed skills and detect drift")
