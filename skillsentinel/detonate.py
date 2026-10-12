@@ -2,11 +2,13 @@
 
 Network isolation by default: the sandbox is built with --unshare-net, so no process
 inside can open a connection — attempted tool egress (curl/wget/nc/ssh/...) is still
-observed via PATH shims that log the destination. If the host bwrap cannot honor
---unshare-net, detonation is refused outright (never a live-egress fallback); the
-caller reports it on stderr and exits 2. `allow_net=True` lifts the isolation
-explicitly and stamps the report with a 'network NOT isolated' warning. If bwrap is
-unavailable, detonation is skipped and reported as such.
+observed via PATH shims that log the destination. The sandbox also gets its own PID
+namespace (--unshare-pid): killing the bwrap supervisor at a detonation timeout takes
+the whole sandbox tree down with it, so a payload cannot survive as a host orphan. If
+the host bwrap cannot honor --unshare-net, detonation is refused outright (never a
+live-egress fallback); the caller reports it on stderr and exits 2. `allow_net=True`
+lifts the network isolation explicitly and stamps the report with a 'network NOT
+isolated' warning. If bwrap is unavailable, detonation is skipped and reported as such.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ SHIM_TOOLS = ("curl", "wget", "nc", "ncat", "ping", "telnet", "ssh", "scp", "ftp
 
 
 class DetonationRefusedError(RuntimeError):
-    """bwrap cannot guarantee network isolation — detonation must not run."""
+    """bwrap cannot guarantee sandbox isolation — detonation must not run."""
 
 
 @dataclass
@@ -71,16 +73,20 @@ def _base_bind_args() -> list[str]:
 
 
 def _bwrap_can_isolate_network(bwrap: str) -> bool:
-    """Non-destructive preflight: can this bwrap build a --unshare-net sandbox?
+    """Non-destructive preflight: can this bwrap build the sandbox we need?
 
-    Runs /usr/bin/true in a throwaway sandbox with the same base binds the real
-    detonation uses. Old bwrap builds reject the option outright ("unrecognized
-    option", exit 1); any probe failure counts as "cannot isolate", so the caller
-    refuses instead of running untrusted code with live egress.
+    Probes both isolation guarantees in one throwaway run of /usr/bin/true with
+    the same base binds the real detonation uses: --unshare-net (no egress from
+    the sandbox) and --unshare-pid (the payload dies with the bwrap supervisor,
+    so a timeout cannot leave it running as a host orphan). Old bwrap builds
+    reject the options outright ("unrecognized option", exit 1); any probe
+    failure counts as "cannot isolate", so the caller refuses instead of
+    running untrusted code with live egress or a leaking process tree.
     """
     try:
         proc = subprocess.run(
-            [bwrap, "--unshare-net", *_base_bind_args(), "/usr/bin/true"],
+            [bwrap, "--unshare-net", "--unshare-pid",
+             *_base_bind_args(), "/usr/bin/true"],
             capture_output=True, text=True, timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -88,7 +94,7 @@ def _bwrap_can_isolate_network(bwrap: str) -> bool:
     return proc.returncode == 0
 
 
-def detonate_file(path: Path, timeout: int = 10,
+def detonate_file(path: Path, timeout: int | None = 10,
                   allow_net: bool = False) -> DetonationReport:
     bwrap = shutil.which("bwrap")
     if bwrap is None:
@@ -100,11 +106,12 @@ def detonate_file(path: Path, timeout: int = 10,
 
     if not allow_net and not _bwrap_can_isolate_network(bwrap):
         raise DetonationRefusedError(
-            f"{bwrap} does not support --unshare-net — detonation refused: "
-            "a sandbox without network isolation would run untrusted code with "
-            "real egress. Upgrade bubblewrap to a build with --unshare-net "
-            "support, or pass --allow-net to explicitly accept a networked "
-            "sandbox.")
+            f"{bwrap} does not support --unshare-net/--unshare-pid — "
+            "detonation refused: without them the sandbox would run untrusted "
+            "code with real egress and a detonation timeout could leave "
+            "payload processes running on the host. Upgrade bubblewrap to a "
+            "build with --unshare-net and --unshare-pid support, or pass "
+            "--allow-net to explicitly accept a networked sandbox.")
 
     with tempfile.TemporaryDirectory(prefix="ssdet_") as tmp:
         tmpdir = Path(tmp)
@@ -140,7 +147,10 @@ def detonate_file(path: Path, timeout: int = 10,
         ]
         if not allow_net:
             cmd.append("--unshare-net")
-        cmd += ["--die-with-parent", "--new-session"]
+        # own PID namespace: when the bwrap supervisor is killed at a timeout,
+        # the kernel tears down the whole sandbox tree — without it the payload
+        # would outlive the monitor as an orphan host process
+        cmd += ["--unshare-pid", "--die-with-parent", "--new-session"]
         if script_copy.suffix == ".py":
             cmd += ["python3", f"/work/{path.name}"]
         else:
@@ -152,10 +162,11 @@ def detonate_file(path: Path, timeout: int = 10,
             "SANDBOX_NETLOG": "/netlog.txt",
         }
         timeout_note = None
+        run_kwargs: dict = {"capture_output": True, "text": True, "env": env}
+        if timeout is not None and timeout > 0:
+            run_kwargs["timeout"] = timeout
         try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, env=env,
-            )
+            proc = subprocess.run(cmd, **run_kwargs)
             rc, out, err = proc.returncode, proc.stdout, proc.stderr
         except subprocess.TimeoutExpired as e:
             # the sandbox was killed at the deadline — recorded as a warning,
@@ -198,6 +209,6 @@ def detonate_file(path: Path, timeout: int = 10,
 
 
 def detonate_tree(root: Path, allow_net: bool = False,
-                  timeout: int = 10) -> list[DetonationReport]:
+                  timeout: int | None = 10) -> list[DetonationReport]:
     return [detonate_file(p, timeout=timeout, allow_net=allow_net)
             for p in find_scripts(root)]

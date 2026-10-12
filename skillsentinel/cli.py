@@ -248,7 +248,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "'network NOT isolated' warning)")
     s.add_argument("--detonate-timeout", type=int, default=10, metavar="SEC",
                    help="with --detonate: kill each sandboxed script after SEC "
-                        "seconds and record a timeout warning (default: 10)")
+                        "seconds and record a timeout warning (0 disables; "
+                        "default: 10)")
     s.add_argument("--show-inconclusive", action="store_true",
                    help="also list candidates the verifier graded inconclusive "
                         "(unknown context) with their file:line and reason")
