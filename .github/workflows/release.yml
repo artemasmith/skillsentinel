@@ -43,11 +43,18 @@ jobs:
 
           tag = sys.argv[1].removeprefix("v")
           text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
-          m = re.search(rf"^## \[{re.escape(tag)}\].*?(?=^## \[|\Z)", text, re.S | re.M)
-          if not m:
+          headers = [(m.start(), m.group(0))
+                     for m in re.finditer(r"^## .*$", text, re.M)]
+          exact = [s for s, h in headers if re.search(rf"\[{re.escape(tag)}\]", h)]
+          staged = [s for s, h in headers
+                    if re.search(rf"\b{re.escape(tag)}\b", h)]
+          start = (exact or staged or [None])[0]
+          if start is None:
               sys.exit(f"CHANGELOG.md has no section for {tag}")
+          later = [s for s, _ in headers if s > start]
+          section = text[start:later[0] if later else len(text)]
           pathlib.Path("release_notes.md").write_text(
-              m.group(0).strip() + "\n", encoding="utf-8")
+              section.strip() + "\n", encoding="utf-8")
           PY
       - name: Create GitHub Release with the artifacts
         uses: softprops/action-gh-release@v2

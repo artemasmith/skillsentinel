@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 0.3.0
+
+The hardening release: performance and CI/consumption fixes from cards C1–C4.
+
+### Added
+
+- Real `--timeout` (C1): regex windows are bounded and the deadline is enforced
+  *inside* the scan — between files and between rules — so a pathological tree
+  (e.g. a minified bundle with an 800 KB single line that used to hang scans
+  for minutes) aborts with `timed out after N s`, exit 2, never a hang.
+- New rules SS040–SS042 (from the rules-hardening card).
+- GitHub Action: `timeout` input (default 600 s, `0` disables) passed through
+  to the CLI as `--timeout`, so a scan cannot outlive the consumer's job; a
+  timed-out scan fails the step with exit 2, never 1.
+- GitHub Action: when `sarif` is set, the report is uploaded to the GitHub
+  Security tab via `github/codeql-action/upload-sarif` (category
+  `skillsentinel`, `continue-on-error`): a failed upload — missing
+  `security-events: write` permission — emits a `::warning` annotation and
+  never fails the job.
+- CI performance gate: a `bench` job runs `tools/bench_scan.py --line 800KB
+  --budget 8 --rule-budget 0.5` on every PR — the 800 KB single-line scan must
+  finish within 8 s and no single rule may take over 0.5 s, or CI fails.
+- README: timeout-behavior documentation for the Action (default 600 s,
+  exit 2 on expiry) and the permissions block the SARIF upload needs.
+
+### Changed
+
+- A scanned payload can no longer cancel its own detection (C2): inline
+  `skillsentinel:ignore` markers and `.skillsentinelignore` patterns apply only
+  under `--honor-ignores`, whole-skill ignore patterns are refused with exit 2,
+  and directive scoping covers every file inside a skill catalog.
+- README pins updated `v0.2.0` → `v0.3.0` (GitHub Action `uses:` and the
+  pre-commit `rev:`): `v0.3.0` is the first tag containing the C1–C4 fixes.
+- README now has a single canonical exit-code table (0 clean / 1 findings or
+  drift / 2 input error incl. `--timeout` expiry / 3 internal error) matching
+  `scan --help`; the contradictory second table in the Commands section
+  (which claimed 2 = usage error and 3 = unused) was removed.
+- Release workflow: release-note extraction now also accepts an
+  `## [Unreleased] — X.Y.Z` header for tag `vX.Y.Z`, so notes can be staged in
+  the changelog before the version bump commit.
+
 ## [0.2.0] - 2026-10-12
 
 ### Added

@@ -80,10 +80,12 @@ Zero runtime dependencies (stdlib only), Python ≥ 3.10. From a checkout no ins
 
 | code | meaning |
 |------|---------|
-| 0 | clean — no confirmed findings |
-| 1 | at least one confirmed finding at/above the `--severity` threshold |
+| 0 | clean — no confirmed findings; for `watch diff`, no drift since the snapshot |
+| 1 | at least one confirmed finding at/above the `--severity` threshold, or drift detected by `watch diff` |
 | 2 | input error: missing or unreadable path, invalid `--rules`, a whole-skill `.skillsentinelignore` pattern, `--timeout` expiry, or the `--max-files` limit |
 | 3 | internal error — a bug, please report it |
+
+This is the only exit-code table in the project; `scan --help` prints the same contract.
 
 Every error is one line on stderr, never a traceback. Two flags bound runaway trees without silently ignoring anything: `--timeout SEC` aborts with `timed out after SEC s` (exit 2), `--max-files N` scans the first N files, reports `limit reached: N of M files` and exits 2. Oversize files (> 2 MB) are scanned as head + tail 512 KB windows and marked `"truncated": true` in the JSON rather than skipped.
 
@@ -188,15 +190,30 @@ Star counts are not shown on purpose — check each repo. SkillSpector catches t
 ## GitHub Actions
 
 ```yaml
-- uses: actions/checkout@v4
-- uses: artemasmith/skillsentinel@v0.2.0
-  with:
-    path: .
-    severity: medium          # fail the build at/above this severity
-    sarif: skillsentinel.sarif
+permissions:
+  contents: read
+  security-events: write   # needed by the SARIF upload step
+
+jobs:
+  skillsentinel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20    # belt and braces: the action also enforces `timeout` below
+    steps:
+      - uses: actions/checkout@v4
+      - uses: artemasmith/skillsentinel@v0.3.0
+        with:
+          path: .                      # file or directory to scan
+          severity: medium             # fail the build at/above this severity
+          timeout: 300                 # abort the scan (exit 2) after N seconds; default 600, 0 disables
+          sarif: skillsentinel.sarif   # write a SARIF 2.1.0 report...
+          upload-sarif: 'true'         # ...and post it to the repo's Security tab
 ```
 
-Pinned to a release tag on purpose: running security tooling from `@main` means whatever was pushed last. Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/workflows/skillsentinel.yml) (test matrix 3.10–3.14, self-scan, SARIF artifact + upload to the Security tab, and a scheduled daily drift scan of this very repo's agent configs).
+The scan cannot hang your job: the `timeout` input is passed to the scanner as `--timeout`, which is enforced *inside* the scan (checked between files and between rules, not via a shell `timeout` wrapper) — an expired scan exits **2** with a `timed out after N s` message, never 1, so a slow pathological tree is never mistaken for findings. When `timeout` is not set the action defaults to 600 s; set `timeout: 0` to scan without a deadline.
+
+When `sarif` is set, the report is uploaded to the GitHub **Security tab** (`github/codeql-action/upload-sarif`, category `skillsentinel`) with `continue-on-error`: a failed upload (e.g. the workflow lacks `security-events: write`) emits a `::warning` annotation but never fails your job — the SARIF file itself stays on disk as the fallback. Add `security-events: write` to the calling workflow's `permissions` (as above) to get the upload.
+
+Pinned to a release tag on purpose: running security tooling from `@main` means whatever was pushed last. `v0.3.0` is the first tag with the C1–C4 hardening (bounded regex cost, real `--timeout`, a payload that cannot cancel its own detection, the Action timeout/SARIF plumbing above). Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/workflows/skillsentinel.yml) (test matrix 3.10–3.14, a scan-speed gate that fails CI on a performance regression, self-scan, SARIF artifact + upload to the Security tab, and a scheduled daily drift scan of this very repo's agent configs).
 
 ## pre-commit
 
@@ -205,7 +222,7 @@ Fail the commit when a skill file or agent config in the repo carries confirmed 
 ```yaml
 repos:
   - repo: https://github.com/artemasmith/skillsentinel
-    rev: v0.2.0
+    rev: v0.3.0
     hooks:
       - id: skillsentinel
 ```
@@ -227,18 +244,9 @@ watch show <dir>                     print current snapshot
 rules [--json]                       list all detection rules
 ```
 
-Exit codes 0/1/2/3 are documented above and in `scan --help`.
+The full flag list lives in `scan --help`; exit codes 0/1/2/3 are documented in the [Exit codes](#exit-codes) table above — there is only one table, and `--help` prints the same one.
 
 Run as `python3 -m skillsentinel ...` or `pip install .` for the `skillsentinel` entry point.
-
-### Exit codes
-
-| Code | Meaning |
-|---|---|
-| `0` | Clean — no confirmed findings at/above `--severity`; for `watch diff`, no drift since the snapshot. |
-| `1` | Confirmed findings at/above `--severity` (default: any), or drift detected by `watch diff`. |
-| `2` | Usage error (bad arguments), or `watch diff` run before `watch init` (snapshot missing). |
-| `3` | Reserved for severity-graded exits (the `SEV_EXIT` mapping in `cli.py`); no current code path returns it. |
 
 ## Zero dependencies
 

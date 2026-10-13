@@ -17,6 +17,14 @@ inputs:
     description: "Optional path to write a SARIF report"
     required: false
     default: ""
+  timeout:
+    description: "Abort the scan after this many seconds and fail with exit 2 (0 disables, default 600). Guarantees the step cannot hang the job waiting for the runner's job timeout."
+    required: false
+    default: "600"
+  upload-sarif:
+    description: "Upload the SARIF report to the GitHub Security tab (requires workflow permissions: security-events: write). Upload failures warn, they never fail the job."
+    required: false
+    default: "true"
 outputs:
   findings:
     description: "Total number of confirmed findings"
@@ -33,6 +41,14 @@ runs:
         if [ -n "${{ inputs.sarif }}" ]; then
           ARGS+=("--sarif" "${{ inputs.sarif }}")
         fi
+        # The scan cannot outlive this step: --timeout is enforced inside the
+        # scanner itself (checks between files and between rules), so a
+        # pathological tree aborts with `timed out after N s` and exit 2 well
+        # before the job-level timeout-minutes would kill the runner.
+        TIMEOUT="${{ inputs.timeout }}"
+        if [ -n "$TIMEOUT" ] && [ "$TIMEOUT" != "0" ]; then
+          ARGS+=("--timeout" "$TIMEOUT")
+        fi
         set +e
         OUT=$(PYTHONPATH="${GITHUB_ACTION_PATH}${PYTHONPATH:+:$PYTHONPATH}" python3 -m skillsentinel "${ARGS[@]}")
         RC=$?
@@ -41,3 +57,19 @@ runs:
         FINDINGS=$(echo "$OUT" | grep -oP 'Confirmed findings: \K[0-9]+' || echo "0")
         echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
         exit $RC
+    - id: sarif-upload
+      name: Upload SARIF to the GitHub Security tab
+      # always(): even a failed or timed-out scan should still upload whatever
+      # report exists. continue-on-error: a missing token/permission must warn,
+      # not fail the consumer's job (the SARIF file itself is the fallback).
+      continue-on-error: true
+      if: ${{ always() && inputs.sarif != '' && inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif }}
+        category: skillsentinel
+    - name: Warn when the SARIF upload did not land
+      if: ${{ always() && steps.sarif-upload.outcome == 'failure' }}
+      shell: bash
+      run: |
+        echo "::warning::SARIF upload to the GitHub Security tab failed (no 'security-events: write' permission, or the scan expired before writing ${{ inputs.sarif }}). Attach ${{ inputs.sarif }} as an artifact to keep the report."

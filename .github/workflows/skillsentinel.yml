@@ -21,9 +21,26 @@ jobs:
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
 
+  bench:
+    # Performance gate: a minified-bundle-shaped 800 KB single line must scan
+    # in ≤ 8 s and no single rule may take > 0.5 s on it. Budgets are
+    # wall-clock ceilings, not per-machine targets — C1 guarantees the scan
+    # is linear-bounded, so a blow-up here means a regression, not slow CI.
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan-speed gate (800KB line <= 8s, each rule <= 0.5s)
+        run: python3 tools/bench_scan.py --line 800KB --budget 8 --rule-budget 0.5
+
   self-scan:
     runs-on: ubuntu-latest
     needs: test
+    timeout-minutes: 15
     permissions:
       contents: read
       security-events: write  # upload-sarif posts findings to the Security tab
@@ -35,7 +52,7 @@ jobs:
       - name: Scan malicious fixtures (expect findings, exit 1 -> pass via SARIF upload)
         run: |
           set +e
-          python3 -m skillsentinel scan tests/fixtures/malicious --sarif scan.sarif --severity critical
+          python3 -m skillsentinel scan tests/fixtures/malicious --sarif scan.sarif --severity critical --timeout 300
           RC=$?
           set -e
           if [ "$RC" -ne 1 ]; then
@@ -46,7 +63,7 @@ jobs:
         # its own detection. This repo's own tree is trusted, and
         # .skillsentinelignore (the rule catalog + malicious fixtures) is exactly
         # the case the flag exists for.
-        run: python3 -m skillsentinel scan . --severity medium --honor-ignores
+        run: python3 -m skillsentinel scan . --severity medium --honor-ignores --timeout 300
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -57,3 +74,4 @@ jobs:
         if: always()  # findings must land in the Security tab even when the scan job failed
         with:
           sarif_file: scan.sarif
+          category: skillsentinel
