@@ -1,6 +1,6 @@
 # Detection rules
 
-Generated from [`rules/rules.json`](../rules/rules.json) — 38 rules, v0.1.0. Do not hand-edit; regenerate instead.
+Generated from [`rules/rules.json`](../rules/rules.json) — 42 rules as of catalog v0.3.0 (`python3 -m skillsentinel rules` prints the live count). Do not hand-edit; regenerate instead.
 
 Every rule match is a **candidate**, not a finding. A file-local verifier (`skillsentinel/verifier.py`) then confirms or demotes it — every demotion carries a written reason in the output. Severity below is the *candidate* severity from the catalog; confirmed findings keep it, demoted ones are reported as `low_trust`.
 
@@ -44,6 +44,10 @@ Every rule match is a **candidate**, not a finding. A file-local verifier (`skil
 | `SS036` | MCP config: tool description override / prompt injection in tool desc | high | mcp | Tool metadata carries instructions aimed at the agent. | `mcp.json` entries whose command/description match documented examples or first-party registries are demoted; injected directives in tool descriptions confirm (hostile instruction embedded in code) |
 | `SS037` | Agent self-modification: rewrite own rules/skills/hooks | critical | self-modification | Skill rewrites the agent's own rules, skills or hook configuration. | Edits to the agent's own rules/skills/hooks confirm unless the line is documentation |
 | `SS038` | Agent hook/backdoor registration | critical | self-modification | Registers agent lifecycle hooks that phone home or execute code. | Edits to the agent's own rules/skills/hooks confirm unless the line is documentation |
+| `SS039` | Invisible characters normalized around detected content | medium | invisible-unicode | Zero-width/format characters were stripped from a line that matches a rule only after normalization (smuggled intent). Emitted by the normalization pass, never by direct matching. | Intent is not cancelled by wording; `directive`-scoped rules do not fire inside code/doc contexts |
+| `SS040` | Dynamic exec: interpreter invoked on a runtime-built value | high | rce-download | `exec`/`eval`/`compile`/`os.system` (or `subprocess` with `shell=True`) is fed a value built at runtime (env var, input, argv, `getattr`, file read, variable) instead of a literal — the classic shape of an out-of-band-delivered payload. | `capability` kind scoped to `code`; decode-call arguments belong to SS013/SS014/SS042 |
+| `SS041` | Egress to literal IP:port or env-content upload to arbitrary host | critical | exfiltration | Connects to a hard-coded IP:port (socket shapes, a bash `/dev/tcp` redirect, or `nc -e`), or ships environment-variable content to an arbitrary host. Loopback and broadcast addresses are excluded. | `capability` kind scoped to `code`; a literal address has no DNS lifecycle and no benign reading for a skill |
+| `SS042` | Decoded blob variable: base64/hex payload assigned then decoded/executed | high | obfuscation | A base64/hex blob (≤79 chars — the size SS013/SS014 miss) is assigned to a variable and that variable is then decoded and/or executed. | `capability` kind; ordinary hex constants (colors, config hashes) don't satisfy the correlation |
 
 ## OWASP tags
 

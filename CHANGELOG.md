@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- README: the first install command was `pipx install skillsentinel`, but the
+  package is not on PyPI yet — a new user's first command failed. The quickstart
+  path is now the tagged git ref (`pipx install
+  "git+https://github.com/artemasmith/skillsentinel@v0.3.0"`, verified in a
+  clean venv/pipx), with PyPI marked as planned rather than implied.
+- Rules loader (`skillsentinel/rules.py`): `pip install --user` installs the
+  rules catalog under the *user base* (`<userbase>/share/...`), which the
+  loader did not probe — every `scan` aborted with exit 2 ("cannot load rules
+  from the built-in catalog"). The user-base path is now a search candidate;
+  venv, pipx and `--user` installs all verified working.
+- README/docs rule counts were stale (39/38 vs the actual 42): the badge is now
+  a live shields.io count from the tagged `rules/rules.json`, and prose counts
+  carry the `skillsentinel rules` verification command. `docs/rules.md` gained
+  the SS039–SS042 rows; the OWASP mapping tables were regenerated from the
+  catalog (ASI01: 17, ASI06: 13, ASI09: 4).
+- README exit-code table omitted the "zero scannable files → exit 2" case;
+  it now matches `scan --help` exactly.
+- README demo output was captured on v0.2.0 and the detonation log omitted two
+  scripts; both re-captured on v0.3.0 (42 findings, 5 detonations).
+- README test-suite comment said "61 tests" (189 at v0.3.0); CONTRIBUTING said
+  32. Counts removed/replaced with the runner's own count so they cannot rot.
+- Comparison table: dead link `github.com/cisco/mcp-scanner` (404) replaced
+  with the real `eSentire-Labs/mcp-scanner`; `agent-scan` linked to
+  `snyk/agent-scan` instead of the generic `snyk/cli` repo. Every link in the
+  table verified HTTP 200.
+
 ## [0.3.0] - 2026-10-13
 
 The hardening release: performance and CI/consumption fixes from cards C1–C4.

