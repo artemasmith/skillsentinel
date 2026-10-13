@@ -107,7 +107,10 @@ def _compile(raw: dict[str, Any]) -> Rule:
         kind=kind,
         context=context,
         not_pattern=_re(raw.get("not_pattern")),
-        requires_pattern=_re(raw.get("requires_pattern")),
+        # requires_pattern does file-level correlation, so it must honor the
+        # rule's own flags (a multiline ^...$ blob-assignment shape would
+        # otherwise never match past line one).
+        requires_pattern=_re(raw.get("requires_pattern"), flags),
         escalate_pattern=_re(raw.get("escalate_pattern")),
     )
 

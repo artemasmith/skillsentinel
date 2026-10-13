@@ -481,8 +481,48 @@
    "kind": "intent",
    "context": "any",
    "requires_pattern": null
+  },
+  {
+   "id": "SS040",
+   "title": "Dynamic exec: interpreter invoked on a runtime-built value",
+   "category": "rce-download",
+   "severity": "high",
+   "owasp": "ASI-06",
+   "pattern": "(?<!re\\.)(?<!ast\\.)\\b(?:exec|eval|compile)\\s*\\(\\s*(?!['\\\"])(?!(?:base64|b64d|b64|binascii|codecs|gzip|zlib|marshal|pickle|bytes|bytearray|json|yaml)\\b)(?:os\\.environ|os\\.getenv|environ\\b|getenv\\s*\\(|getattr\\s*\\(|globals\\s*\\(|locals\\s*\\(|vars\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*\\s*[\\[.)])|os\\.system\\s*\\(\\s*(?!['\\\"])(?:os\\.environ|os\\.getenv|getenv\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*)|subprocess\\.(?:run|call|check_call|check_output|Popen)\\s*\\(\\s*(?!['\\\"\\[])(?:os\\.environ|os\\.getenv|getenv\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*)[^\\n]{0,80}?shell\\s*=\\s*(?:True|1)\\b",
+   "description": "exec/eval/compile/os.system (or subprocess with shell=True) is fed a value built at runtime (env var, input, argv, getattr, file read, variable) instead of a literal - the classic shape of a payload delivered out of band. Decode-call arguments (b64decode etc.) are deliberately excluded here; SS013/SS014/SS042 own those.",
+   "kind": "capability",
+   "context": "code",
+   "requires_pattern": null,
+   "escalate_pattern": "\\b(?:exec|eval|compile|os\\.system|subprocess)\\b"
+  },
+  {
+   "id": "SS041",
+   "title": "Egress to literal IP:port or env-content upload to arbitrary host",
+   "category": "exfiltration",
+   "severity": "critical",
+   "owasp": "ASI-09",
+   "pattern": "(?:socket\\.create_connection|socket\\.socket\\s*\\(|\\.connect\\s*\\(|\\.sendto\\s*\\(|\\.sendall\\s*\\()[^\\n]{0,80}?(?<![\\d.])(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}['\\\"]?\\s*[,)]|/dev/tcp/(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}(?:[/:]\\d{1,5})?|\\bnc(?:at)?\\b[^\\n]{0,60}?-[a-zA-Z]*e\\b[^\\n]{0,60}?(?<![\\d.])(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}\\b|(?:curl|wget|requests\\.post|urlopen|fetch\\()[^\\n]{0,100}?(?:os\\.environ|os\\.getenv|getenv\\s*\\()|(?:os\\.environ|os\\.getenv|getenv\\s*\\()[^\\n]{0,100}?(?:curl|wget|requests\\.post|urlopen|fetch\\()",
+   "description": "Connects to a hard-coded IP:port (socket shapes, a bash /dev/tcp redirect, or nc -e), or ships environment-variable content to an arbitrary host. A literal address has no DNS lifecycle and no benign reading for a skill. Loopback and broadcast addresses are excluded.",
+   "kind": "capability",
+   "context": "code",
+   "requires_pattern": null,
+   "escalate_pattern": "socket\\.|\\.connect\\s*\\(|\\.sendall|\\.sendto|\\.recv|/dev/tcp|\\bnc(?:at)?\\b|requests\\.post|urlopen|fetch\\(|\\bcurl\\b|\\bwget\\b"
+  },
+  {
+   "id": "SS042",
+   "title": "Decoded blob variable: base64/hex payload assigned then decoded/executed",
+   "category": "obfuscation",
+   "severity": "high",
+   "owasp": "ASI-01",
+   "pattern": "(?:\\b(?:base64\\.)?b64decode\\s*\\(\\s*[A-Za-z_]\\w*\\s*\\)|\\batob\\s*\\(\\s*[A-Za-z_]\\w*\\s*\\)|\\bbytes\\.fromhex\\s*\\(\\s*[A-Za-z_]\\w*\\s*\\)|\\bbinascii\\.unhexlify\\s*\\(\\s*[A-Za-z_]\\w*\\s*\\)|\\bcodecs\\.decode\\s*\\(\\s*[A-Za-z_]\\w*\\s*,\\s*['\\\"]hex['\\\"]\\s*\\))",
+   "description": "A base64/hex blob is assigned to a variable and that variable is then decoded and/or executed. SS013 (>=80 chars) and SS014 (inline literal) miss the small staged blob; this closes that gap. Blob length is capped at 79 chars so ordinary hex constants (colors, hashes in configs) don't satisfy the correlation.",
+   "kind": "capability",
+   "context": "code",
+   "requires_pattern": "^[ \\t]*(?:[A-Za-z_]\\w*[ \\t]*=[ \\t]*['\\\"]?(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,79}(?![A-Za-z0-9+/])['\\\"]?[ \\t]*$|[A-Za-z_]\\w*[ \\t]*=[ \\t]*['\\\"][0-9a-fA-F]{16,79}['\\\"][ \\t]*$)",
+   "multiline": true,
+   "escalate_pattern": "\\b(?:exec|eval|compile|subprocess|os\\.system|popen|check_output|check_call|Popen)\\b"
   }
  ],
  "_about": "severity = worst case if the rule fires on a hostile artifact (for humans to triage). kind = intent (exploitation: a directive with no benign reading) | capability (dual-use). context = directive (agent instruction files) | code | any. requires_pattern = file-level correlation: the file must also match this, else the hit is not a finding. Cancellation (docs / negation / placeholders) is generic and lives in verifier.py so the catalog stays declarative. `patterns` are candidates, not findings.",
- "_version": "0.2.0"
+ "_version": "0.3.0"
 }

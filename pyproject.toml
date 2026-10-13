@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skillsentinel"
-version = "0.2.0"
+version = "0.3.0"
 description = "Post-install security scanner for AI-agent skills and prompt configs: prompt injection, unicode smuggling, exfil, miners, persistence, MCP backdoors, drift detection and sandboxed detonation."
 readme = "README.md"
 requires-python = ">=3.10"
