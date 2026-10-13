@@ -61,6 +61,9 @@ jobs:
         with:
           files: dist/*
           body_path: release_notes.md
+          # Idempotent: re-cutting a tag (e.g. to pick up a CI-only fix) must
+          # update the release instead of failing on the assets that are there.
+          overwrite_files: true
 
   publish:
     needs: [build, release]
