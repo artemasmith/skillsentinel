@@ -15,7 +15,7 @@
 [![CI](https://github.com/artemasmith/skillsentinel/actions/workflows/skillsentinel.yml/badge.svg)](https://github.com/artemasmith/skillsentinel/actions/workflows/skillsentinel.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
-[![Rules](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fartemasmith%2Fskillsentinel%2Fv0.3.0%2Frules%2Frules.json&query=%24.rules.length&label=rules&color=purple)](rules/rules.json)
+[![Rules](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fartemasmith%2Fskillsentinel%2Fv0.3.1%2Frules%2Frules.json&query=%24.rules.length&label=rules&color=purple)](rules/rules.json)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-success.svg)](#zero-dependencies)
 [![OWASP Agentic Top 10](https://img.shields.io/badge/mapped%20to-OWASP%20Agentic%20Top%2010-red.svg)](#what-it-detects)
 
@@ -36,7 +36,7 @@ pattern match ──► candidate ──► file-local verifier ──► findin
                           with a written reason                is traceable
 ```
 
-1. **Pattern match → candidate.** 42 rules (as of v0.3.0 — `skillsentinel rules` prints the live count), cheap, high recall, allowed to be noisy.
+1. **Pattern match → candidate.** 44 rules (as of v0.3.1 — `skillsentinel rules` prints the live count), cheap, high recall, allowed to be noisy.
 2. **Candidate → verdict.** A deterministic, file-local verifier confirms it (`exploitable` — e.g. a secret read in a file that also performs network egress), downgrades it (`capability` — a dual-use primitive, credible but not proof), or drops it (`low_trust`) — in that case the candidate stays visible in `--json` with its demotion reason.
 
 What the verifier actually decides on: is the line a directive to an agent, code, or prose? Is it inside a fenced code block or explicitly negated? Is a secret read corroborated by egress **in the same file**? Is a base64 blob accompanied by a decode call? Does the line merely enumerate attack signatures (a detection table) instead of issuing them? Four profiles (`--profile strict|balanced|loose|paranoid`) trade precision against recall. No LLM, no network, no hidden state.
@@ -71,10 +71,11 @@ Exit code `1` when findings meet the severity threshold — drop it straight int
 Not yet on PyPI (publication planned — until then install from a tagged git ref):
 
 ```bash
-pipx install "git+https://github.com/artemasmith/skillsentinel@v0.3.0"   # preferred: isolated CLI on your PATH
-# or, inside a virtualenv:
-pip install "skillsentinel @ git+https://github.com/artemasmith/skillsentinel@v0.3.0"
+pipx install "git+https://github.com/artemasmith/skillsentinel@v0.3.1"  # preferred: isolated CLI on PATH
+pip install git+https://github.com/artemasmith/skillsentinel@v0.3.1     # or into a virtualenv
 ```
+
+Once the package is published on PyPI these become the plain `pipx install skillsentinel` / `pip install skillsentinel`.
 
 `pip install --user` works too (the rules catalog is found under the user base as of 0.3.1). Zero runtime dependencies (stdlib only), Python ≥ 3.10. From a checkout no install is needed at all — `python3 -m skillsentinel …` runs in place.
 
@@ -95,7 +96,7 @@ Every error is one line on stderr, never a traceback. Two flags bound runaway tr
 
 ```console
 $ python3 -m skillsentinel scan tests/fixtures/malicious
-SkillSentinel v0.3.0 — scanned .../skillsentinel/tests/fixtures/malicious (10 files, 0 skipped, profile: balanced)
+SkillSentinel v0.3.1 — scanned .../skillsentinel/tests/fixtures/malicious (10 files, 0 skipped, profile: balanced)
 Confirmed findings: 42 (critical: 27, high: 14, medium: 1, low: 0); 3 candidate(s) demoted
 
 == CRITICAL ==
@@ -118,12 +119,12 @@ Confirmed findings: 42 (critical: 27, high: 14, medium: 1, low: 0); 3 candidate(
 exit code 1
 
 $ python3 -m skillsentinel scan tests/fixtures/benign
-SkillSentinel v0.3.0 — scanned .../skillsentinel/tests/fixtures/benign (6 files, 0 skipped, profile: balanced)
+SkillSentinel v0.3.1 — scanned .../skillsentinel/tests/fixtures/benign (6 files, 0 skipped, profile: balanced)
 No exploitable findings. Supply chain looks clean. ✓
 exit code 0
 
 $ python3 -m skillsentinel scan tests/fixtures/benign-hard   # lookalikes that are NOT malicious
-SkillSentinel v0.3.0 — scanned .../skillsentinel/tests/fixtures/benign-hard (6 files, 0 skipped, profile: balanced)
+SkillSentinel v0.3.1 — scanned .../skillsentinel/tests/fixtures/benign-hard (6 files, 0 skipped, profile: balanced)
 No exploitable findings. Supply chain looks clean. ✓; 13 candidate(s) demoted — see --json for reasons
 exit code 0
 
@@ -159,7 +160,7 @@ exit code 1
 
 ## What it detects
 
-42 rules (as of v0.3.0 — `skillsentinel rules` prints the live count), all mapped to the [OWASP Agentic Top 10](https://genai.owasp.org/):
+44 rules (as of v0.3.1 — `skillsentinel rules` prints the live count), all mapped to the [OWASP Agentic Top 10](https://genai.owasp.org/):
 
 | Category | Severity range | OWASP | Examples |
 |---|---|---|---|
@@ -204,7 +205,7 @@ jobs:
     timeout-minutes: 20    # belt and braces: the action also enforces `timeout` below
     steps:
       - uses: actions/checkout@v4
-      - uses: artemasmith/skillsentinel@v0.3.0
+      - uses: artemasmith/skillsentinel@v0.3.1
         with:
           path: .                      # file or directory to scan
           severity: medium             # fail the build at/above this severity
@@ -217,7 +218,7 @@ The scan cannot hang your job: the `timeout` input is passed to the scanner as `
 
 When `sarif` is set, the report is uploaded to the GitHub **Security tab** (`github/codeql-action/upload-sarif`, category `skillsentinel`) with `continue-on-error`: a failed upload (e.g. the workflow lacks `security-events: write`) emits a `::warning` annotation but never fails your job — the SARIF file itself stays on disk as the fallback. Add `security-events: write` to the calling workflow's `permissions` (as above) to get the upload.
 
-Pinned to a release tag on purpose: running security tooling from `@main` means whatever was pushed last. `v0.3.0` is the first tag with the C1–C4 hardening (bounded regex cost, real `--timeout`, a payload that cannot cancel its own detection, the Action timeout/SARIF plumbing above). Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/workflows/skillsentinel.yml) (test matrix 3.10–3.14, a scan-speed gate that fails CI on a performance regression, self-scan, SARIF artifact + upload to the Security tab, and a scheduled daily drift scan of this very repo's agent configs).
+Pinned to a release tag on purpose: running security tooling from `@main` means whatever was pushed last. `v0.3.0` brought the C1–C4 hardening (bounded regex cost, real `--timeout`, a payload that cannot cancel its own detection, the Action timeout/SARIF plumbing above); `v0.3.1` closes the detection bypasses found by an independent re-check (see [CHANGELOG.md](CHANGELOG.md)). Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/workflows/skillsentinel.yml) (test matrix 3.10–3.14, a scan-speed gate that fails CI on a performance regression, self-scan, SARIF artifact + upload to the Security tab, and a scheduled daily drift scan of this very repo's agent configs).
 
 ## pre-commit
 
@@ -226,7 +227,7 @@ Fail the commit when a skill file or agent config in the repo carries confirmed 
 ```yaml
 repos:
   - repo: https://github.com/artemasmith/skillsentinel
-    rev: v0.3.0
+    rev: v0.3.1
     hooks:
       - id: skillsentinel
 ```
@@ -266,7 +267,7 @@ Pure Python stdlib (`re`, `json`, `hashlib`, `argparse`, `subprocess`, `pathlib`
 ## Testing & contributing
 
 ```bash
-python3 -m unittest discover -s tests -v   # 189 tests as of v0.3.0 (the runner prints the count)
+python3 -m unittest discover -s tests -v   # 189 tests as of v0.3.1 (the runner prints the count)
 ```
 
 Fixtures: 10 malicious skills (real attack patterns, inert payloads), 6 clean skills, and a **`benign-hard` corpus of the false positives this scanner actually produced** while being built — a fenced install command, a legit SSH backup, a detection-signature table, a systemd deploy, a script reading the user's own saved password. All three sets are asserted: every malicious directory flagged, zero findings on both benign sets, every demotion carrying a reason.

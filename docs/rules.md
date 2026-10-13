@@ -1,6 +1,6 @@
 # Detection rules
 
-Generated from [`rules/rules.json`](../rules/rules.json) — 42 rules as of catalog v0.3.0 (`python3 -m skillsentinel rules` prints the live count). Do not hand-edit; regenerate instead.
+Generated from [`rules/rules.json`](../rules/rules.json) — 44 rules as of catalog v0.3.1 (`python3 -m skillsentinel rules` prints the live count). Do not hand-edit; regenerate instead.
 
 Every rule match is a **candidate**, not a finding. A file-local verifier (`skillsentinel/verifier.py`) then confirms or demotes it — every demotion carries a written reason in the output. Severity below is the *candidate* severity from the catalog; confirmed findings keep it, demoted ones are reported as `low_trust`.
 
@@ -48,6 +48,8 @@ Every rule match is a **candidate**, not a finding. A file-local verifier (`skil
 | `SS040` | Dynamic exec: interpreter invoked on a runtime-built value | high | rce-download | `exec`/`eval`/`compile`/`os.system` (or `subprocess` with `shell=True`) is fed a value built at runtime (env var, input, argv, `getattr`, file read, variable) instead of a literal — the classic shape of an out-of-band-delivered payload. | `capability` kind scoped to `code`; decode-call arguments belong to SS013/SS014/SS042 |
 | `SS041` | Egress to literal IP:port or env-content upload to arbitrary host | critical | exfiltration | Connects to a hard-coded IP:port (socket shapes, a bash `/dev/tcp` redirect, or `nc -e`), or ships environment-variable content to an arbitrary host. Loopback and broadcast addresses are excluded. | `capability` kind scoped to `code`; a literal address has no DNS lifecycle and no benign reading for a skill |
 | `SS042` | Decoded blob variable: base64/hex payload assigned then decoded/executed | high | obfuscation | A base64/hex blob (≤79 chars — the size SS013/SS014 miss) is assigned to a variable and that variable is then decoded and/or executed. | `capability` kind; ordinary hex constants (colors, config hashes) don't satisfy the correlation |
+| `SS043` | DNS exfiltration: resolver query built from command substitution | critical | exfiltration | Feeds the output of a command substitution (file read, env dump, secret) into a DNS lookup as a subdomain of an attacker-controlled zone — exfiltration over DNS that never opens a socket. | `capability` kind scoped to `code`; a resolver query over a literal hostname with no command substitution stays quiet |
+| `SS044` | PowerShell download cradle: iex of a downloaded payload | critical | rce-download | `Invoke-Expression` of a string fetched at runtime (WebClient / Invoke-WebRequest / BITS) — the PowerShell pipe-to-iex cradle that downloads and executes a payload in one line. | `intent` kind; a documented `Invoke-Expression` over a literal string is demoted as documentation |
 
 ## OWASP tags
 

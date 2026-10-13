@@ -19,9 +19,9 @@ ASI08 Cascading Failures, ASI09 Human-Agent Trust Exploitation, ASI10 Rogue Agen
 | SS006 | prompt-injection | ASI08 Cascading Failures |
 | SS008, SS009, SS010, SS011, SS012, SS039 | invisible-unicode | ASI01 Agent Goal Hijack |
 | SS013, SS014, SS015, SS042 | obfuscation | ASI01 Agent Goal Hijack |
-| SS016, SS017, SS018, SS019, SS040 | rce-download | ASI06 Memory & Context Poisoning |
+| SS016, SS017, SS018, SS019, SS040, SS044 | rce-download | ASI06 Memory & Context Poisoning |
 | SS020, SS021, SS022, SS023 | credential-access | ASI04 Agentic Supply Chain Vulnerabilities |
-| SS024, SS025, SS026, SS041 | exfiltration | ASI09 Human-Agent Trust Exploitation |
+| SS024, SS025, SS026, SS041, SS043 | exfiltration | ASI09 Human-Agent Trust Exploitation |
 | SS027, SS028 | miner | ASI06 Memory & Context Poisoning |
 | SS029, SS030, SS031, SS032, SS033 | persistence | ASI06 Memory & Context Poisoning |
 | SS034, SS036 | mcp | ASI01 Agent Goal Hijack |
@@ -37,10 +37,10 @@ ASI08 Cascading Failures, ASI09 Human-Agent Trust Exploitation, ASI10 Rogue Agen
 | ASI03 Identity and Privilege Abuse | — | **no coverage** |
 | ASI04 Agentic Supply Chain Vulnerabilities | SS020–SS023 | **4 rules** — credential access within the skill supply chain |
 | ASI05 Unexpected Code Execution (RCE) | — | **no rule-level tag**; partially covered behaviourally by `--detonate` (sandboxed script execution) and the rce-download category (tagged ASI06) |
-| ASI06 Memory & Context Poisoning | SS016–SS019, SS027, SS028, SS029–SS033, SS035, SS040 | **13 rules** — RCE downloads, dynamic exec, miners, persistence, MCP npx-from-URL |
+| ASI06 Memory & Context Poisoning | SS016–SS019, SS027, SS028, SS029–SS033, SS035, SS040, SS044 | **14 rules** — RCE downloads, dynamic exec, miners, persistence, MCP npx-from-URL, PowerShell cradle |
 | ASI07 Insecure Inter-Agent Communication | — | **no coverage** |
 | ASI08 Cascading Failures | SS006, SS037, SS038 | **3 rules** — hide-from-user instructions, agent self-modification |
-| ASI09 Human-Agent Trust Exploitation | SS024, SS025, SS026, SS041 | **4 rules** — exfiltration to paste/webhook/ngrok and literal IP:port egress |
+| ASI09 Human-Agent Trust Exploitation | SS024, SS025, SS026, SS041, SS043 | **5 rules** — exfiltration to paste/webhook/ngrok, literal IP:port egress and DNS exfiltration |
 | ASI10 Rogue Agents | — | **no coverage** |
 
 ## Explicitly uncovered risks

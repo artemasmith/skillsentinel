@@ -648,8 +648,13 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
         result.limit_reached = (max_files, result.files_scanned + over_limit)
     # D2: a manifest file dropped by .skillsentinelignore silences the file
     # every directive lives in — refuse the leftover scan as an input error.
-    ignored_manifest = next((rel for rel in result.ignored_files
-                             if Path(rel).name.lower() in MANIFEST_NAMES), None)
+    # Scoped to the scan ROOT's own manifest: a repository self-scan legitimately
+    # ignores its fixture corpora, which contain nested SKILL.md files on purpose,
+    # and those nested manifests belong to files that stay visible to the scan.
+    ignored_manifest = next(
+        (rel for rel in result.ignored_files
+         if Path(rel).name.lower() in MANIFEST_NAMES and Path(rel).parent == Path(".")),
+        None)
     if ignored_manifest is not None:
         raise InputError(
             f".skillsentinelignore excludes skill manifest {ignored_manifest!r} — "

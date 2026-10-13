@@ -100,10 +100,13 @@ class ReadmeTests(unittest.TestCase):
     """README: one true exit-code table, current pins, documented timeout."""
 
     def test_pins_are_at_least_v0_3_0(self):
+        from skillsentinel import __version__
         self.assertNotIn("@v0.2.0", README)
         self.assertNotIn("rev: v0.2.0", README)
-        self.assertIn("artemasmith/skillsentinel@v0.3.0", README)
-        self.assertIn("rev: v0.3.0", README)
+        self.assertIn(f"artemasmith/skillsentinel@v{__version__}", README,
+                      "the Action snippet must pin the current release tag")
+        self.assertIn(f"rev: v{__version__}", README,
+                      "the pre-commit snippet must pin the current release tag")
 
     def test_exactly_one_exit_code_table(self):
         self.assertEqual(README.count("## Exit codes"), 1)
@@ -141,20 +144,23 @@ class ChangelogReleaseTests(unittest.TestCase):
             CHANGELOG, rf"(?m)^## .*(?:\[{version}\]|[Uu]nreleased.*\b{version}\b)",
             "the changelog must have a section for the current version")
 
-    def test_release_extractor_finds_staged_section(self):
+    def test_release_extractor_finds_the_current_section(self):
         """Replay the release.yml extraction logic against the real CHANGELOG:
-        tag v0.3.0 must resolve to the 0.3.0 section and stop at the next
-        '## ' header (not swallow 0.2.0)."""
+        the current version must resolve to its own section and stop at the next
+        '## ' header (not swallow an earlier release)."""
         import re
+        from skillsentinel import __version__
+        version = re.escape(__version__)
         text = CHANGELOG
         headers = [(m.start(), m.group(0)) for m in re.finditer(r"^## .*$", text, re.M)]
-        exact = [s for s, h in headers if re.search(r"\[0\.3\.0\]", h)]
-        staged = [s for s, h in headers if re.search(r"\b0\.3\.0\b", h)]
+        exact = [s for s, h in headers if re.search(rf"\[{version}\]", h)]
+        staged = [s for s, h in headers if re.search(rf"\b{version}\b", h)]
         start = (exact or staged or [None])[0]
-        assert start is not None, "no section mentioning 0.3.0"
+        assert start is not None, f"no section mentioning {__version__}"
         later = [s for s, _ in headers if s > start]
         section = text[start:later[0] if later else len(text)]
-        self.assertIn("C1–C4", section)
+        self.assertIn("###", section,
+                      "the release notes for the current version must not be empty")
         self.assertNotIn("watch diff --rescan", section,
                          "the section must end before the 0.2.0 entry begins")
 
