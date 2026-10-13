@@ -517,6 +517,7 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
     sources: dict[str, str] = {}
     candidates: list[Finding] = []
     final: list[Finding] = []
+    scanned_rels: list[str] = []  # every file actually scanned, findings or not
     deadline = time.monotonic() + timeout if timeout else None
     linked: set[tuple[int, int]] = set()  # (st_dev, st_ino) of resolved symlink targets
     over_limit = 0
@@ -556,6 +557,7 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
             p, rules, root, honor_ignores=honor_ignores,
             deadline=deadline, timeout=timeout)
         result.files_scanned += 1
+        scanned_rels.append(rel)
         result.suppressed += suppressed
         if truncated:
             result.truncated = True
@@ -584,7 +586,7 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
             sources[alias] = sources[f.file]
             alias_back[alias] = f.file
             f.file = alias
-    verdicts = verify_findings(candidates, sources, cfg)
+    verdicts = verify_findings(candidates, sources, cfg, scanned_paths=scanned_rels)
     for f in candidates:
         if f.file in alias_back:
             f.file = alias_back[f.file]
