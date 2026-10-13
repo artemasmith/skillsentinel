@@ -441,7 +441,9 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
     to silence its own detection by default.
 
     `timeout`/`max_files` bound the walk; expiry or hitting the limit is an
-    input error for the CLI to report — never a silently partial scan.
+    input error for the CLI to report — never a silently partial scan. So are
+    the two ways a scan can see nothing: a zero-rule catalog and a walk that
+    yielded zero scannable files — a scan that saw nothing proves nothing.
     """
     root = Path(target).expanduser().resolve()
     if not root.exists():
@@ -454,6 +456,12 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
     except (OSError, ValueError) as e:
         raise InputError(
             f"cannot load rules from {rules_path or 'the built-in catalog'}: {e}") from None
+    if not rules:
+        # An empty catalog matches nothing, so it would "verify" any tree as
+        # clean — that verdict is worthless, refuse it as an input error.
+        raise InputError(
+            f"rules catalog {rules_path or 'the built-in catalog'} has zero rules — "
+            "refusing to report an empty scan as clean")
     bind_rules(rules)
     cfg = VERIFIERS_BY_NAME[profile]
     excludes = list(exclude or [])
@@ -515,6 +523,13 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
         final.extend(file_final)
     if over_limit:
         result.limit_reached = (max_files, result.files_scanned + over_limit)
+    if result.files_scanned == 0 and not result.limit_reached:
+        # Every file was excluded/ignored/skipped: the walk saw nothing, so a
+        # clean verdict here would prove nothing (same refusal as a whole-skill
+        # .skillsentinelignore). limit_reached keeps its own exit-2 report.
+        raise InputError(
+            f"scanned 0 files in {root} (all excluded or skipped) — "
+            "refusing to report an empty scan as clean")
 
     # Executable content whose suffix does not say so (git hooks, bytecode) is
     # verified under a code suffix so the verifier grades it as the code it is.

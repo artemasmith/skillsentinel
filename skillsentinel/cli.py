@@ -23,8 +23,9 @@ EXIT_CODES_EPILOG = """\
 exit codes:
   0  clean — no confirmed findings
   1  at least one confirmed finding at/above the --severity threshold
-  2  input error: missing or unreadable path, invalid --rules, a .skillsentinelignore
-     pattern that ignores the whole skill, --timeout expiry, --max-files limit reached
+  2  input error: missing or unreadable path, invalid or empty --rules, a .skillsentinelignore
+     pattern that ignores the whole skill, a scan that saw zero scannable files,
+     --timeout expiry, --max-files limit reached
   3  internal error — a bug, please report it"""
 
 SEV_COLOR = {

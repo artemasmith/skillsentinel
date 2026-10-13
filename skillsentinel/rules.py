@@ -107,7 +107,9 @@ def _compile(raw: dict[str, Any]) -> Rule:
 def load_rules(path: Path | str | None = None) -> list[Rule]:
     p = Path(path) if path else RULES_PATH
     data = json.loads(p.read_text(encoding="utf-8"))
-    rules = [_compile(r) for r in data["rules"]]
+    # A missing 'rules' key is an empty catalog, not a crash: the caller
+    # (scan_path) refuses zero-rule catalogs as an input error.
+    rules = [_compile(r) for r in data.get("rules", [])]
     ids = [r.id for r in rules]
     if len(ids) != len(set(ids)):
         dupes = {i for i in ids if ids.count(i) > 1}

@@ -182,8 +182,12 @@ class IgnoreTests(unittest.TestCase):
             [sys.executable, "-m", "skillsentinel", "scan", str(MAL),
              "--exclude", "*", "--severity", "critical"],
             capture_output=True, text=True, cwd=REPO)
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("No exploitable findings", p.stdout)
+        # S2 (t_6de87156): a walk where every file is excluded saw nothing, so
+        # it must refuse (exit 2) instead of reporting clean — this supersedes
+        # this test's old exit-0/"No exploitable findings" expectation.
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("refusing to report an empty scan as clean", p.stderr)
+        self.assertNotIn("No exploitable findings", p.stdout)
 
     def test_repo_self_scan_is_clean(self):
         """CI gate: the scanner must not flag its own tree (fixtures excluded)."""
