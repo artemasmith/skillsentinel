@@ -126,15 +126,25 @@ class ReadmeTests(unittest.TestCase):
 
 
 class ChangelogReleaseTests(unittest.TestCase):
-    """The changelog stages v0.3.0 notes; the release extractor must find them."""
+    """The changelog must carry the notes of the version being released, and
+    the release extractor must find them."""
 
-    def test_unreleased_section_for_0_3_0_exists(self):
-        self.assertRegex(CHANGELOG, r"(?m)^## \[[^\]]+\].*0\.3\.0")
+    def test_changelog_carries_a_section_for_the_current_version(self):
+        """Either shape is valid: the final `## [0.3.0] - <date>` header, or the
+        staging header `## [Unreleased] — 0.3.0` the release workflow also
+        accepts. Requiring the staging shape forever would forbid renaming the
+        header at release time."""
+        import re
+        from skillsentinel import __version__
+        version = re.escape(__version__)
+        self.assertRegex(
+            CHANGELOG, rf"(?m)^## .*(?:\[{version}\]|[Uu]nreleased.*\b{version}\b)",
+            "the changelog must have a section for the current version")
 
     def test_release_extractor_finds_staged_section(self):
         """Replay the release.yml extraction logic against the real CHANGELOG:
-        tag v0.3.0 must resolve to the [Unreleased] — 0.3.0 section and stop
-        at the next '## ' header (not swallow 0.2.0)."""
+        tag v0.3.0 must resolve to the 0.3.0 section and stop at the next
+        '## ' header (not swallow 0.2.0)."""
         import re
         text = CHANGELOG
         headers = [(m.start(), m.group(0)) for m in re.finditer(r"^## .*$", text, re.M)]
