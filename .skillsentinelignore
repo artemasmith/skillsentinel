@@ -2,6 +2,11 @@
 # purpose — the scanner must not flag the corpus it is written against.
 tests/
 rules/rules.json
+# The bypass corpus plants inert attack strings on purpose (same rationale as
+# tests/): it is the corpus the scanner is written against.
+tools/
 # Local git worktrees (agent branches) are full checkouts of this repo: scanning
 # them reports this repo's own catalog and fixtures a second time.
 .worktrees/
+# mshift kanban-card state (untracked workflow files) is not skill content.
+.mshift/
