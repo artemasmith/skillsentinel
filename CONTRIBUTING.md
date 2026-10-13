@@ -6,7 +6,7 @@ Bug reports, rule ideas and PRs are welcome. Small and focused beats large and s
 
 ```bash
 git clone https://github.com/artemasmith/skillsentinel && cd skillsentinel
-python3 -m unittest discover -s tests -v   # must pass: 32 tests
+python3 -m unittest discover -s tests -v   # must pass (the runner prints the test count)
 ```
 
 Python ≥ 3.10, stdlib only — a PR that adds a runtime dependency will be declined.

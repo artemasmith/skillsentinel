@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import site
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,13 +30,18 @@ def _default_rules_path() -> Path:
 
     Source checkout: <repo>/rules/rules.json. Installed wheel: the data file lands
     in <prefix>/share/skillsentinel/rules/rules.json (see [tool.setuptools.data-files])
-    while site-packages/skillsentinel/ has no sibling rules/ directory.
+    while site-packages/skillsentinel/ has no sibling rules/ directory. A
+    `pip install --user` wheel lands the data file under the *user base*
+    (<userbase>/share/...), not under sys.prefix, so that layout is probed too.
     """
     pkg_dir = Path(__file__).resolve().parent
     candidates = [
         pkg_dir.parent / "rules" / "rules.json",                     # source tree
         Path(sys.prefix) / "share" / "skillsentinel" / "rules" / "rules.json",  # installed
     ]
+    if site.USER_BASE:  # None in some embedded interpreters
+        candidates.append(Path(site.USER_BASE) / "share" / "skillsentinel"
+                          / "rules" / "rules.json")              # pip install --user
     for c in candidates:
         if c.is_file():
             return c

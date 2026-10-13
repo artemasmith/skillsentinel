@@ -17,11 +17,11 @@ ASI08 Cascading Failures, ASI09 Human-Agent Trust Exploitation, ASI10 Rogue Agen
 | SS001, SS002, SS003, SS005, SS007 | prompt-injection | ASI01 Agent Goal Hijack |
 | SS004 | prompt-injection | ASI02 Tool Misuse and Exploitation |
 | SS006 | prompt-injection | ASI08 Cascading Failures |
-| SS008, SS009, SS010, SS011, SS012 | invisible-unicode | ASI01 Agent Goal Hijack |
-| SS013, SS014, SS015 | obfuscation | ASI01 Agent Goal Hijack |
-| SS016, SS017, SS018, SS019 | rce-download | ASI06 Memory & Context Poisoning |
+| SS008, SS009, SS010, SS011, SS012, SS039 | invisible-unicode | ASI01 Agent Goal Hijack |
+| SS013, SS014, SS015, SS042 | obfuscation | ASI01 Agent Goal Hijack |
+| SS016, SS017, SS018, SS019, SS040 | rce-download | ASI06 Memory & Context Poisoning |
 | SS020, SS021, SS022, SS023 | credential-access | ASI04 Agentic Supply Chain Vulnerabilities |
-| SS024, SS025, SS026 | exfiltration | ASI09 Human-Agent Trust Exploitation |
+| SS024, SS025, SS026, SS041 | exfiltration | ASI09 Human-Agent Trust Exploitation |
 | SS027, SS028 | miner | ASI06 Memory & Context Poisoning |
 | SS029, SS030, SS031, SS032, SS033 | persistence | ASI06 Memory & Context Poisoning |
 | SS034, SS036 | mcp | ASI01 Agent Goal Hijack |
@@ -32,15 +32,15 @@ ASI08 Cascading Failures, ASI09 Human-Agent Trust Exploitation, ASI10 Rogue Agen
 
 | OWASP risk (2026) | SkillSentinel rules | Coverage |
 |---|---|---|
-| ASI01 Agent Goal Hijack | SS001–SS003, SS005, SS007–SS015, SS034, SS036 | **15 rules** — prompt injection, unicode smuggling, obfuscation, MCP injection |
+| ASI01 Agent Goal Hijack | SS001–SS003, SS005, SS007–SS015, SS034, SS036, SS039, SS042 | **17 rules** — prompt injection, unicode smuggling, obfuscation, MCP injection |
 | ASI02 Tool Misuse and Exploitation | SS004 | **1 rule** — system-prompt exfiltration via tooling |
 | ASI03 Identity and Privilege Abuse | — | **no coverage** |
 | ASI04 Agentic Supply Chain Vulnerabilities | SS020–SS023 | **4 rules** — credential access within the skill supply chain |
 | ASI05 Unexpected Code Execution (RCE) | — | **no rule-level tag**; partially covered behaviourally by `--detonate` (sandboxed script execution) and the rce-download category (tagged ASI06) |
-| ASI06 Memory & Context Poisoning | SS016–SS019, SS027, SS028, SS029–SS033, SS035 | **12 rules** — RCE downloads, miners, persistence, MCP npx-from-URL |
+| ASI06 Memory & Context Poisoning | SS016–SS019, SS027, SS028, SS029–SS033, SS035, SS040 | **13 rules** — RCE downloads, dynamic exec, miners, persistence, MCP npx-from-URL |
 | ASI07 Insecure Inter-Agent Communication | — | **no coverage** |
 | ASI08 Cascading Failures | SS006, SS037, SS038 | **3 rules** — hide-from-user instructions, agent self-modification |
-| ASI09 Human-Agent Trust Exploitation | SS024, SS025, SS026 | **3 rules** — exfiltration to paste/webhook/ngrok |
+| ASI09 Human-Agent Trust Exploitation | SS024, SS025, SS026, SS041 | **4 rules** — exfiltration to paste/webhook/ngrok and literal IP:port egress |
 | ASI10 Rogue Agents | — | **no coverage** |
 
 ## Explicitly uncovered risks
