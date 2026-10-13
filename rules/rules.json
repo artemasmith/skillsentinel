@@ -205,7 +205,7 @@
    "category": "rce-download",
    "severity": "critical",
    "owasp": "ASI-06",
-   "pattern": "(curl|wget)[^\\n]*(/tmp|/dev/shm|~/\\.)[^\\n]*&&[^\\n]*(chmod|bash|sh|\\./)",
+   "pattern": "(curl|wget)[^\\n]{0,256}(/tmp|/dev/shm|~/\\.)[^\\n]{0,256}&&[^\\n]{0,256}(chmod|bash|sh|\\./)",
    "description": "Downloads a binary into a temp path and executes it.",
    "kind": "intent",
    "context": "any",
@@ -382,7 +382,7 @@
    "kind": "capability",
    "context": "any",
    "requires_pattern": null,
-   "escalate_pattern": ">>\\s*[^\\n]*(bashrc|zshrc|profile)[^\\n]*(curl|wget|nc |bash|sh |base64|eval|chmod)|echo[^\\n]*(curl|wget|base64)[^\\n]*(bashrc|zshrc|profile)"
+   "escalate_pattern": ">>\\s*[^\\n]{0,200}(bashrc|zshrc|profile)[^\\n]{0,200}(curl|wget|nc |bash|sh |base64|eval|chmod)|echo[^\\n]{0,200}(curl|wget|base64)[^\\n]{0,200}(bashrc|zshrc|profile)"
   },
   {
    "id": "SS032",
