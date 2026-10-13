@@ -11,3 +11,6 @@ tools/
 # mshift kanban-card state (untracked workflow files) is not skill content: the
 # card files quote the hostile patterns they were written against.
 .mshift/
+# SkillSentinel's own drift-watch snapshot is generated state (gitignored): it
+# embeds file contents, so a self-scan reads it as "rewrites own rules/hooks".
+.skillsentinel-snapshot.json
