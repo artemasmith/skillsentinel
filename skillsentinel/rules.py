@@ -118,16 +118,14 @@ def load_rules(path: Path | str | None = None) -> list[Rule]:
     # A valid-JSON document of the wrong shape is a bad input file, not a bug:
     # every shape/regex problem here is ValueError, which both call sites wrap
     # into an input error naming the path (exit 2) — never KeyError/TypeError
-    # leaking as "internal error" exit 3. A missing 'rules' key is an empty
-    # catalog, not a crash: the caller (scan_path) refuses zero-rule catalogs
-    # as an input error.
-    if not isinstance(data, dict):
+    # leaking as "internal error" exit 3. An explicit empty 'rules' array is
+    # NOT a shape error: it loads as zero rules and the caller (scan_path)
+    # refuses a zero-rule catalog as an input error.
+    if not isinstance(data, dict) or not isinstance(data.get("rules"), list):
         raise ValueError("not a rules catalog: expected an object "
                          "with a 'rules' array")
-    if not isinstance(data.get("rules", []), list):
-        raise ValueError("not a rules catalog: 'rules' must be an array")
     rules = []
-    for i, raw in enumerate(data.get("rules", [])):
+    for i, raw in enumerate(data["rules"]):
         if not isinstance(raw, dict):
             raise ValueError(f"rule #{i}: expected an object, "
                              f"got {type(raw).__name__}")
