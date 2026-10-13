@@ -198,6 +198,7 @@ def _load_corpus():
         "bypass_corpus", REPO / "tools" / "bypass_corpus.py")
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
+    sys.modules["bypass_corpus"] = mod  # dataclasses need a registered module
     spec.loader.exec_module(mod)
     return mod
 
