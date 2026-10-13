@@ -10,3 +10,6 @@ venv/
 *.sarif
 .coverage
 .DS_Store
+
+# internal agent workflow state (kanban card files)
+.mshift/
