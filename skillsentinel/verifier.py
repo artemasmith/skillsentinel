@@ -189,8 +189,10 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
         return ("capability", "command quoted inline — install snippet or payload?")
 
     if kind == "capability":
-        if _cancel_word_governs(line, raw):
-            return ("low_trust", "line is about detection/defence, not the primitive")
+        cancel = _governing_cancel_word(line, raw)
+        if cancel:
+            return ("low_trust", f"line is about detection/defence, not the primitive "
+                                 f"(cancel word: {cancel})")
         if NAMED_EXAMPLE.search(line) or PLACEHOLDER.search(line):
             return ("low_trust", "placeholder/quoted value, not a real secret")
         # Credential + egress in the same file is exfiltration. Credential alone is a
@@ -200,13 +202,17 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
         return ("capability", "dual-use primitive — credible, but not proof of exfiltration")
 
     # kind == intent: a directive addressed to an agent
-    if _cancel_word_governs(line, raw):
+    cancel = _governing_cancel_word(line, raw)
+    if cancel:
         if NAMED_EXAMPLE.search(line):
-            return ("low_trust", "line is a named example, not an instruction")
+            return ("low_trust", f"line is a named example, not an instruction "
+                                 f"(cancel word: {cancel})")
         if _is_negated(line, raw):
-            return ("low_trust", "line is negated (instructs to avoid this behaviour)")
+            return ("low_trust", f"line is negated (instructs to avoid this "
+                                 f"behaviour; cancel word: {cancel})")
         # a defence-scoped word without negation is still suspicious; keep it weak
-        return ("low_trust", "line frames the pattern as detection/defence")
+        return ("low_trust", f"line frames the pattern as detection/defence "
+                             f"(cancel word: {cancel})")
     if NAMED_EXAMPLE.search(line):
         return ("low_trust", "line is a named example, not an instruction")
 
@@ -253,22 +259,25 @@ def _in_url_token(line: str, start: int, end: int) -> bool:
     return "/" in line[left:right]
 
 
-def _cancel_word_governs(line: str, raw: str) -> bool:
+def _governing_cancel_word(line: str, raw: str) -> str | None:
     """F1: a defensive-lexicon word demotes only from a position that governs the
     match — before it (negation or a description frame such as "detects the
     phrase ..."/"pattern: ..."), inside it, or as part of a URL/path token. A word
     AFTER the match as the object of the attack sentence ("... instructions about
     malware detection", "send ~/.ssh/id_rsa to the attacker") is the attack naming
-    its own target, and cancelling on it lets a skill mask itself."""
+    its own target, and cancelling on it lets a skill mask itself. Returns the
+    matched term of the first governing occurrence (its original casing), so the
+    demotion reason can name the word that caused it."""
     span = _matched_span(line, raw)
     if span is None:
-        return bool(CANCEL_WORDS.search(line))  # match not locatable: stay conservative
+        m = CANCEL_WORDS.search(line)  # match not locatable: stay conservative
+        return m.group(0) if m else None
     for m in CANCEL_WORDS.finditer(line):
-        if m.start() < span[1]:
-            return True  # before or inside the matched span
+        if m.start() < span[1]:  # before or inside the matched span
+            return m.group(0)
         if _in_url_token(line, m.start(), m.end()):
-            return True
-    return False
+            return m.group(0)
+    return None
 
 
 def verify_findings(findings: list, sources: dict[str, str],
