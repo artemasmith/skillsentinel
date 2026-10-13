@@ -36,6 +36,10 @@ HOOKS_DIR = "hooks"
 # security tool can tell, so it is refused as an input error instead.
 WHOLE_SKILL_IGNORE_PATTERNS = {"*", "**", "**/*"}
 
+# Skill manifests: a `.skillsentinelignore` that drops the manifest silences the
+# file every directive lives in (D2) — the scan that remains proves nothing.
+MANIFEST_NAMES = {"skill.md", "skill.yaml", "skill.json", "plugin.json"}
+
 # Executable content whose suffix does not announce it. The verifier grades by
 # suffix-derived context, so these are verified under a shell-script alias —
 # see `_verification_alias`.
@@ -126,6 +130,7 @@ class ScanResult:
     truncated: bool = False
     truncated_files: list[str] = field(default_factory=list)
     limit_reached: tuple[int, int] | None = None
+    undecodable_files: list[str] = field(default_factory=list)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -160,6 +165,7 @@ class ScanResult:
             "truncated": self.truncated,
             "truncated_files": self.truncated_files,
             "limit_reached": list(self.limit_reached) if self.limit_reached else None,
+            "undecodable_files": self.undecodable_files,
         }
 
 
@@ -230,12 +236,24 @@ def _decode_blob(blob: str, kind: str, exec_line: str) -> str:
         return ""
 
 
-def _stage2_payloads(text: str) -> list[tuple[int, int, str, str]]:
+def _stage2_payloads(text: str, *, deadline: float | None = None,
+                     timeout: float | None = None
+                     ) -> list[tuple[int, int, str, str]]:
     """(assignment line, execution line, decoded text, variable name) for every
-    blob variable this file also executes/decodes."""
+    blob variable this file also executes/decodes.
+
+    The cross-reference is quadratic in pathological files (8000 hex
+    assignments), so the `--timeout` deadline is checked in BOTH loops (D7):
+    expiry raises InputError instead of outliving the budget.
+    """
+    def _check_deadline() -> None:
+        if deadline is not None and time.monotonic() > deadline:
+            raise InputError(f"timed out after {timeout:g} s")
+
     lines = text.splitlines()
     out: list[tuple[int, int, str, str]] = []
     for i, line in enumerate(lines):
+        _check_deadline()
         var = blob = kind = None
         for rx, k in ((_XHEX_VAR, "xhex"), (_HEX_VAR, "hex"), (_B64_VAR, "b64")):
             m = rx.match(line)
@@ -245,6 +263,7 @@ def _stage2_payloads(text: str) -> list[tuple[int, int, str, str]]:
         if blob is None:
             continue
         for j, other in enumerate(lines):
+            _check_deadline()  # inner half of the quadratic: bound it too
             if j == i or not _EXEC_LINE.search(other):
                 continue
             if not re.search(rf"\b{re.escape(var)}\b", other):
@@ -294,13 +313,68 @@ def _iter_target_files(root: Path) -> Iterable[Path]:
         yield p
 
 
-def _read_scannable(path: Path) -> tuple[str, bool]:
-    """Read a file into scannable text. Returns (text, truncated).
+# BOM sniffing order matters: UTF-32-LE's BOM starts with UTF-16-LE's, so the
+# longer prefix must win. Files written by `iconv -t UTF-16LE` carry no BOM at
+# all — the NUL-density fallback below catches those.
+_BOMS = ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"),
+         (b"\xef\xbb\xbf", "utf-8-sig"),
+         (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16"))
+
+
+def _decode_scannable(raw: bytes) -> tuple[str, bool]:
+    """Decode file bytes into scannable text. Returns (text, decodable).
+
+    BOM first (UTF-8/16/32, both endiannesses), then a NUL-density fallback for
+    BOM-less UTF-16 (an ASCII-range payload in UTF-16 is half NUL bytes), then
+    UTF-8, then latin-1 as the never-fails last resort so attack strings in
+    binaries stay visible. `decodable` is False only for that last resort when
+    the result is mostly non-printable — callers report it loudly (D3).
+    """
+    for bom, enc in _BOMS:
+        if raw.startswith(bom):
+            try:
+                text = raw.decode(enc)
+            except UnicodeDecodeError:
+                break  # lying BOM: fall through to the generic ladder
+            if enc != "utf-8-sig":
+                # Sanity-check the claim: text written in UTF-16/32 is nearly
+                # always ASCII-range code points per char. A file that merely
+                # *starts* with BOM-ish bytes (\xff\xfe\xfa...) decodes to
+                # high-codepoint junk — treat that as a lying BOM and fall
+                # through so the ASCII payload after it stays scannable.
+                body = text[1:]  # skip the U+FEFF the BOM decodes to
+                if body and (sum(1 for ch in body if ord(ch) < 0x80)
+                             / max(len(body), 1)) < 0.5:
+                    break
+            return text, True
+    if len(raw) >= 4 and raw.count(0) >= len(raw) // 4:
+        # BOM-less UTF-16 heuristic: try both endiannesses, keep the one that
+        # decodes to mostly-printable text (a real binary fails both checks).
+        for enc in ("utf-16-le", "utf-16-be"):
+            try:
+                text = raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+            printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\r\t")
+            if printable >= len(text) * 0.8:
+                return text, True
+    try:
+        return raw.decode("utf-8"), True
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+        printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\r\t")
+        return text, printable > 0 and printable >= len(text) * 0.5
+
+
+def _read_scannable(path: Path) -> tuple[str, bool, bool]:
+    """Read a file into scannable text. Returns (text, truncated, decodable).
 
     Oversize files are windowed (head + tail) instead of skipped: a rug pull
     must not be able to hide behind megabytes of padding. Content that is not
     valid UTF-8 — bytecode, binaries, mixed encodings — is decoded as latin-1
-    so the attack strings inside are still visible to the rules.
+    so the attack strings inside are still visible to the rules; a decode that
+    yields mostly non-printable garbage is flagged as not decodable so the
+    caller can say so instead of reporting a silent empty scan (D3).
     """
     size = path.stat().st_size
     with path.open("rb") as fh:
@@ -315,18 +389,17 @@ def _read_scannable(path: Path) -> tuple[str, bool]:
                    + str(MAX_FILE_BYTES).encode() + b" bytes, middle not scanned ...]\n\n"
                    + tail)
             truncated = True
-    try:
-        return raw.decode("utf-8"), truncated
-    except UnicodeDecodeError:
-        return raw.decode("latin-1", errors="replace"), truncated
+    text, decodable = _decode_scannable(raw)
+    return text, truncated, decodable
 
 
 def scan_file(path: Path, rules: list[Rule], root: Path,
               honor_ignores: bool = False, *,
               deadline: float | None = None,
               timeout: float | None = None
-              ) -> tuple[list[Finding], int, str, bool, list[Finding]]:
-    """Scan one file. Returns (candidates, suppressed, text, truncated, final).
+              ) -> tuple[list[Finding], int, str, bool, list[Finding], bool]:
+    """Scan one file. Returns (candidates, suppressed, text, truncated, final,
+    decodable).
 
     Candidates are unverified: `scan_path` runs them through the verifier
     before they become findings. Correlation rules (`requires_pattern`) are
@@ -345,7 +418,7 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
             raise InputError(f"timed out after {timeout:g} s")
 
     try:
-        text, truncated = _read_scannable(path)
+        text, truncated, decodable = _read_scannable(path)
     except OSError as e:
         # unreadable (mode 000), vanished mid-scan: an input problem, not a bug
         raise InputError(f"cannot read {path}: {e.strerror or e}") from None
@@ -355,7 +428,7 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
     rel = str(path.relative_to(root)) if path != root else path.name
     lines = text.splitlines()
     if honor_ignores and NOQA_FILE in "\n".join(lines[:10]):
-        return [], len(lines), text, truncated, []  # wholesale suppression, counted as suppressed
+        return [], len(lines), text, truncated, [], decodable  # wholesale suppression, counted as suppressed
     rule_by_id = {r.id: r for r in rules}
     for rule in rules:
         _check_deadline()
@@ -429,7 +502,8 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
                 ))
 
     # Stage-2 decode (F7): payload blobs that this file also executes.
-    for assign_line, exec_line, decoded, var in _stage2_payloads(text):
+    for assign_line, exec_line, decoded, var in _stage2_payloads(
+            text, deadline=deadline, timeout=timeout):
         for rule in rules:
             if rule.pattern is None or rule.id == INVISIBLE_NORM_RULE_ID:
                 continue
@@ -447,7 +521,7 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
                        f"{assign_line}): {m.group(0)[:60]!r} in the decoded text",
                 decoded_from=f"{var}@{assign_line}",
             ))
-    return candidates, suppressed, text, truncated, final
+    return candidates, suppressed, text, truncated, final, decodable
 
 
 def _verification_alias(rel: str) -> str:
@@ -553,12 +627,16 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
             continue
         if deadline is not None and time.monotonic() > deadline:
             raise InputError(f"timed out after {timeout:g} s")
-        found, suppressed, text, truncated, file_final = scan_file(
+        found, suppressed, text, truncated, file_final, decodable = scan_file(
             p, rules, root, honor_ignores=honor_ignores,
             deadline=deadline, timeout=timeout)
         result.files_scanned += 1
         scanned_rels.append(rel)
         result.suppressed += suppressed
+        if not decodable:
+            # D3: a file that could not be decoded is reported loudly, never
+            # allowed to quietly shrink the scan to nothing.
+            result.undecodable_files.append(rel)
         if truncated:
             result.truncated = True
             result.truncated_files.append(rel)
@@ -568,6 +646,14 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
         final.extend(file_final)
     if over_limit:
         result.limit_reached = (max_files, result.files_scanned + over_limit)
+    # D2: a manifest file dropped by .skillsentinelignore silences the file
+    # every directive lives in — refuse the leftover scan as an input error.
+    ignored_manifest = next((rel for rel in result.ignored_files
+                             if Path(rel).name.lower() in MANIFEST_NAMES), None)
+    if ignored_manifest is not None:
+        raise InputError(
+            f".skillsentinelignore excludes skill manifest {ignored_manifest!r} — "
+            "refusing to scan a skill without its manifest")
     if result.files_scanned == 0 and not result.limit_reached:
         # Every file was excluded/ignored/skipped: the walk saw nothing, so a
         # clean verdict here would prove nothing (same refusal as a whole-skill
@@ -575,6 +661,17 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
         raise InputError(
             f"scanned 0 files in {root} (all excluded or skipped) — "
             "refusing to report an empty scan as clean")
+    if (deadline is not None and time.monotonic() > deadline) or (
+            len(result.undecodable_files) == result.files_scanned):
+        # D3: nothing scanned was readable text — a clean verdict would prove
+        # nothing. (A timeout spent entirely inside the walk reports the same way.)
+        if deadline is not None and time.monotonic() > deadline:
+            raise InputError(f"timed out after {timeout:g} s")
+        raise InputError(
+            f"no file in {root} could be decoded as text "
+            f"({', '.join(result.undecodable_files[:3])}"
+            f"{'…' if len(result.undecodable_files) > 3 else ''}) — "
+            "refusing to report an unreadable scan as clean")
 
     # Executable content whose suffix does not say so (git hooks, bytecode) is
     # verified under a code suffix so the verifier grades it as the code it is.
@@ -621,6 +718,9 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
 
     result.findings = _dedupe(result.findings)
     result.demoted = _dedupe(result.demoted)
+    if deadline is not None and time.monotonic() > deadline:
+        # D7: the verification stage must honour the budget like every other.
+        raise InputError(f"timed out after {timeout:g} s")
     # stable order: severity desc, then file, then rule, then line
     result.findings.sort(key=lambda f: (-SEVERITY_ORDER[f.severity], f.file, f.rule_id, f.line))
     return result

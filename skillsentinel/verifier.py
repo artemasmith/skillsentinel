@@ -31,6 +31,18 @@ CODE_SUFFIXES = {
     ".toml", ".json", ".cfg", ".ini", ".conf", ".tf", ".mk",
 }
 
+# A bare label at the start of a line ("Warning:", "Note:", "Detect:") frames the
+# line but says nothing about the matched pattern: attackers prepend it precisely
+# so the scanner cancels its own hit (D1). Such a label must never demote on its
+# own; only a real negation/description of the pattern (e.g. "this is not an
+# example of ...", "do not run ...") still can.
+LABEL_PREFIX = re.compile(
+    r"^[>#*\-\s\[(]*"
+    r"(warning|caution|note|important|attention|disclaimer|alert|nb|tip|hint|"
+    r"remark|detect(?:ion|ed)?|scan(?:ner|ned)?|indicator|signature|observed)"
+    r"\s*[:\-\u2014]\s+",
+    re.IGNORECASE)
+
 # Words that mean the line is *about* detection or defence, not issuing an attack.
 # Deliberately excludes bare `example`/`sample`/`demo`: attackers name their hosts
 # `evil.example` precisely so a naive scanner cancels its own hit.
@@ -111,6 +123,15 @@ PLACEHOLDER = re.compile(r"\$\{?[A-Za-z_]|<[A-Za-z_ ]+>|\{\{|%[A-Z_]+%|\.\.\.|xx
                          r"REDACTED|<set>|YOUR_|example\.com|placeholder|"
                          r"\b(test|dummy|fake|mock|sample)[_-][A-Za-z0-9_]+", re.IGNORECASE)
 
+# …except when the `$VAR` prefix points at the user's own secret store. In shell
+# code `$HOME/.ssh/id_rsa` IS the real key at runtime; demoting it as a
+# placeholder is exactly the blind spot an attacker's /dev/tcp one-liner hides
+# behind (D5).
+RUNTIME_SECRET = re.compile(
+    r"\$\{?(?:HOME|USER|LOGNAME|USERPROFILE)\}?[\\/][^\"'\s`]*"
+    r"\.(?:ssh|aws|gnupg|kube|docker|netrc|pem|key)[\\/]?[^\"'\s`]*"
+    r"|~/\.(?:ssh|netrc|aws|kube|gnupg)", re.IGNORECASE)
+
 # Egress: a real outbound call to a URL. Reading a credential is dual-use; reading it and
 # posting it somewhere is exfiltration, and that escalation must be evidence-based (this
 # file actually talks to the network), not assumed from the file extension.
@@ -185,19 +206,26 @@ def _directive_roots(paths) -> frozenset[str]:
 
 
 def _fenced_state(lines: list[str]) -> list[bool]:
-    """Per-line: is this line inside a fenced code block?"""
+    """Per-line: is this line inside a fenced code block? An UNTERMINATED
+    fence is attacker-controlled framing (D10): a single ``` at the top of a
+    SKILL.md must not turn everything below into quoted specimens, so lines
+    after a fence that never closes are treated as unfenced — full trust."""
     state, out, open_marker = False, [], None
-    for line in lines:
+    open_idx = -1
+    for i, line in enumerate(lines):
         m = FENCE.match(line)
         if m:
             marker = m.group(1)[0]
             if not state:
-                state, open_marker = True, marker
+                state, open_marker, open_idx = True, marker, i
             elif open_marker == marker:
                 state, open_marker = False, None
             out.append(False)  # the fence line itself carries no specimen
             continue
         out.append(state)
+    if state and open_idx >= 0:  # fence never closed: suspicious framing, not demotion
+        for i in range(open_idx + 1, len(out)):
+            out[i] = False
     return out
 
 
@@ -245,7 +273,8 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
         if cancel:
             return ("low_trust", f"line is about detection/defence, not the primitive "
                                  f"(cancel word: {cancel})")
-        if NAMED_EXAMPLE.search(line) or PLACEHOLDER.search(line):
+        if (NAMED_EXAMPLE.search(line) or PLACEHOLDER.search(line)) \
+                and not RUNTIME_SECRET.search(line):
             return ("low_trust", "placeholder/quoted value, not a real secret")
         # Credential + egress in the same file is exfiltration. Credential alone is a
         # capability: the same line is in every backup script ever written.
@@ -311,6 +340,40 @@ def _in_url_token(line: str, start: int, end: int) -> bool:
     return "/" in line[left:right]
 
 
+# SS040 precision screen: a dynamic-exec hit whose interpreter argument is a
+# plain identifier is ambiguous — the CI wrapper `def sh(cmd): subprocess.run(
+# cmd, shell=True, ...)` and `env.compile(src)` are everywhere, and a HIGH on
+# them is a false positive. Confirm at full trust only when the value is
+# runtime-built/tainted (input, argv, env, concat, f-string, decoded bytes);
+# otherwise report inconclusive with a stated reason — never a silent clean.
+_SS040_SINK = re.compile(
+    r"\b(?:exec|eval|compile)\s*\(\s*([A-Za-z_]\w*)\s*[,)]"
+    r"|os\.(?:system|popen)\s*\(\s*([A-Za-z_]\w*)\s*\)"
+    r"|subprocess\.(?:run|call|check_call|check_output|Popen)\s*\(\s*"
+    r"([A-Za-z_]\w*)\s*,[^\n]{0,80}?shell\s*=\s*(?:True|1)\b",
+    re.IGNORECASE)
+_SS040_PLAIN_RHS = re.compile(r'^(?:"[^"\n]*"|\'[^\'\n]*\'|[\w.]+)$')
+
+
+def _ss040_plain_arg(text: str, line: str) -> str | None:
+    """The plain, untainted interpreter argument on this line, if any.
+    Returns None (keep full trust) when the argument is absent, not a bare
+    identifier, or provably built from runtime input."""
+    m = _SS040_SINK.search(line)
+    if not m:
+        return None
+    var = next(g for g in m.groups() if g)
+    for am in re.finditer(r"^\s*" + re.escape(var) + r"\s*=\s*(.+?)\s*$",
+                          text, re.MULTILINE):
+        rhs = am.group(1)
+        if _SS040_PLAIN_RHS.match(rhs):
+            return var  # assigned a literal/constant — no taint evidence
+        return None     # built at runtime (input()/argv/call/f-string/concat)
+    if re.search(r"\bdef\s+\w+\s*\([^)]*\b" + re.escape(var) + r"\b", text):
+        return var      # parameter of a helper — the classic wrapper pattern
+    return var          # bare identifier, no other evidence either way
+
+
 def _governing_cancel_word(line: str, raw: str) -> str | None:
     """F1: a defensive-lexicon word demotes only from a position that governs the
     match — before it (negation or a description frame such as "detects the
@@ -324,7 +387,11 @@ def _governing_cancel_word(line: str, raw: str) -> str | None:
     if span is None:
         m = CANCEL_WORDS.search(line)  # match not locatable: stay conservative
         return m.group(0) if m else None
+    label = LABEL_PREFIX.match(line)
+    label_end = label.end() if label else 0
     for m in CANCEL_WORDS.finditer(line):
+        if m.start() < label_end:  # part of a leading bare label — never demotes (D1)
+            continue
         if m.start() < span[1]:  # before or inside the matched span
             return m.group(0)
         if _in_url_token(line, m.start(), m.end()):
@@ -373,6 +440,16 @@ def verify_findings(findings: list, sources: dict[str, str],
                     and rule.category in ("credential-access", "exfiltration"):
                 escalates = bool(NET_EGRESS.search(text))
         verdict, reason = _reason_for(rule, ctx, line, raw, cfg, fence, escalates)
+        if verdict == "exploitable" and f.rule_id == "SS040" and not cfg.disable_demotions:
+            # Precision screen: exec/eval of a plain, untainted identifier is
+            # ambiguous (CI wrappers, template compilers) — keep it visible as
+            # inconclusive instead of a HIGH false positive (see _ss040_plain_arg).
+            plain = _ss040_plain_arg(text, line)
+            if plain:
+                verdict, reason = "inconclusive", (
+                    f"interpreter argument '{plain}' is a plain value with no taint "
+                    "signal (secret read, runtime input, decoded blob) — ambiguous, "
+                    "not confirmed")
         if verdict == "low_trust" and not cfg.drop_self_described_examples:
             verdict, reason = "inconclusive", reason + " (kept: profile keeps weak hits)"
         if cfg.disable_demotions and verdict != "exploitable":

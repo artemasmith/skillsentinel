@@ -94,6 +94,13 @@ def _print_findings(result, use_color: bool, suppressed: int = 0,
     print(f"SkillSentinel v{__version__} — scanned {result.path} "
           f"({result.files_scanned} files, {result.files_skipped} skipped, "
           f"profile: {result.profile})")
+    if result.undecodable_files:
+        # D3: undecodable files are reported loudly, never silently dropped.
+        names = ", ".join(result.undecodable_files[:3])
+        more = f" (+{len(result.undecodable_files) - 3} more)" \
+            if len(result.undecodable_files) > 3 else ""
+        print(f"warning: {len(result.undecodable_files)} file(s) could not be "
+              f"decoded as text: {names}{more}", file=sys.stderr)
     if not total:
         note = f", {suppressed} suppressed by inline markers" if suppressed else ""
         if dropped:
