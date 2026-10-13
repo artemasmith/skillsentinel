@@ -5,3 +5,5 @@ rules/rules.json
 # Local git worktrees (agent branches) are full checkouts of this repo: scanning
 # them reports this repo's own catalog and fixtures a second time.
 .worktrees/
+# Kanban card files quote the hostile patterns they were written against.
+.mshift/

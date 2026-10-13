@@ -51,6 +51,24 @@ NOQA_FILE = "skillsentinel:ignore-file"
 
 _rules_version_cache: str | None = None
 
+# First non-whitespace index of a line, C-speed, without strip()'s full copy:
+# a 1 MB single-line bundle matched many times must not be copied per match.
+_NONSPACE = re.compile(r"\S", re.UNICODE)
+
+
+def _line_snippet(line: str, limit: int = 200) -> str:
+    """The line's first `limit` characters after str.strip(), cheaply.
+
+    Equivalent to `line.strip()[:limit]`: stripping only removes leading
+    whitespace (skipped via `_NONSPACE`) and trailing whitespace beyond the
+    window, so the visible result is `line[start:start + limit]` — with an
+    rstrip only when the stripped line is shorter than the limit.
+    """
+    m = _NONSPACE.search(line)
+    start = m.start() if m else len(line)
+    snippet = line[start:start + limit]
+    return snippet.rstrip() if len(snippet) < limit else snippet
+
 
 def rules_version() -> str:
     """The catalog's own `_version` key (rules/rules.json), read once per process."""
@@ -304,8 +322,10 @@ def _read_scannable(path: Path) -> tuple[str, bool]:
 
 
 def scan_file(path: Path, rules: list[Rule], root: Path,
-              honor_ignores: bool = False) -> tuple[list[Finding], int, str, bool,
-                                                    list[Finding]]:
+              honor_ignores: bool = False, *,
+              deadline: float | None = None,
+              timeout: float | None = None
+              ) -> tuple[list[Finding], int, str, bool, list[Finding]]:
     """Scan one file. Returns (candidates, suppressed, text, truncated, final).
 
     Candidates are unverified: `scan_path` runs them through the verifier
@@ -314,7 +334,16 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
     `final` carries evidence-backed findings (invisible-unicode marker,
     stage-2 decoded payloads) that skip grading because the evidence is the
     decode itself, not a judgement about the line.
+
+    `deadline` (from `--timeout SEC`) is checked between rules and inside
+    match storms, so a single pathological file cannot outlive the budget —
+    expiry raises the same InputError `scan_path` raises between files.
     """
+
+    def _check_deadline() -> None:
+        if deadline is not None and time.monotonic() > deadline:
+            raise InputError(f"timed out after {timeout:g} s")
+
     try:
         text, truncated = _read_scannable(path)
     except OSError as e:
@@ -329,14 +358,23 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
         return [], len(lines), text, truncated, []  # wholesale suppression, counted as suppressed
     rule_by_id = {r.id: r for r in rules}
     for rule in rules:
+        _check_deadline()
         if rule.pattern is None:
             continue
         # file-level correlation: a blob is not evidence unless the file also decodes it
         if rule.requires_pattern is not None and not rule.requires_pattern.search(text):
             continue
-        for m in rule.pattern.finditer(text):
-            line = text.count("\n", 0, m.start()) + 1
-            snippet = lines[line - 1].strip()[:200] if 0 < line <= len(lines) else m.group(0)[:200]
+        # Line numbers are counted incrementally: finditer yields ascending,
+        # non-overlapping matches, so counting "\n" from the previous match
+        # start (not from 0) keeps a match-dense megabyte line linear.
+        nl_cursor, nl_count = 0, 0
+        for i, m in enumerate(rule.pattern.finditer(text)):
+            if deadline is not None and not i & 0xFF:
+                _check_deadline()  # a match storm must not outlive the budget
+            nl_count += text.count("\n", nl_cursor, m.start())
+            nl_cursor = m.start()
+            line = nl_count + 1
+            snippet = _line_snippet(lines[line - 1]) if 0 < line <= len(lines) else m.group(0)[:200]
             if honor_ignores and NOQA in snippet:
                 suppressed += 1
                 continue
@@ -355,17 +393,21 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
         seen = {(c.rule_id, c.line) for c in candidates}
         revealed: list[int] = []
         for rule in rules:
+            _check_deadline()
             if rule.pattern is None or rule.id == INVISIBLE_NORM_RULE_ID:
                 continue
             if rule.requires_pattern is not None and not rule.requires_pattern.search(text):
                 continue
+            nl_cursor, nl_count = 0, 0
             for m in rule.pattern.finditer(norm):
                 orig = norm_idx[m.start()] if m.start() < len(norm_idx) else len(text) - 1
-                line = text.count("\n", 0, orig) + 1
+                nl_count += text.count("\n", nl_cursor, orig)
+                nl_cursor = orig
+                line = nl_count + 1
                 if (rule.id, line) in seen:
                     continue
                 seen.add((rule.id, line))
-                snippet = lines[line - 1].strip()[:200] if 0 < line <= len(lines) else m.group(0)[:200]
+                snippet = _line_snippet(lines[line - 1]) if 0 < line <= len(lines) else m.group(0)[:200]
                 candidates.append(Finding(
                     rule_id=rule.id, severity=rule.severity, title=rule.title,
                     category=rule.category, owasp=rule.owasp, file=rel, line=line,
@@ -379,7 +421,7 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
                 final.append(Finding(
                     rule_id=marker.id, severity=marker.severity, title=marker.title,
                     category=marker.category, owasp=marker.owasp, file=rel, line=smuggled,
-                    snippet=lines[smuggled - 1].strip()[:200] if smuggled <= len(lines) else "",
+                    snippet=_line_snippet(lines[smuggled - 1]) if smuggled <= len(lines) else "",
                     description=marker.description, kind=marker.kind,
                     verdict="exploitable",
                     reason="invisible characters normalized — this line matched a rule "
@@ -399,7 +441,7 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
             final.append(Finding(
                 rule_id=rule.id, severity=rule.severity, title=rule.title,
                 category=rule.category, owasp=rule.owasp, file=rel, line=exec_line,
-                snippet=lines[exec_line - 1].strip()[:200] if exec_line <= len(lines) else "",
+                snippet=_line_snippet(lines[exec_line - 1]) if exec_line <= len(lines) else "",
                 description=rule.description, kind=rule.kind, verdict="exploitable",
                 reason=f"confirmed from decoded payload of {var} (assigned on line "
                        f"{assign_line}): {m.group(0)[:60]!r} in the decoded text",
@@ -511,7 +553,8 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
         if deadline is not None and time.monotonic() > deadline:
             raise InputError(f"timed out after {timeout:g} s")
         found, suppressed, text, truncated, file_final = scan_file(
-            p, rules, root, honor_ignores=honor_ignores)
+            p, rules, root, honor_ignores=honor_ignores,
+            deadline=deadline, timeout=timeout)
         result.files_scanned += 1
         result.suppressed += suppressed
         if truncated:
