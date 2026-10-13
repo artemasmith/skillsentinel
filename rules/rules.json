@@ -193,7 +193,7 @@
    "category": "rce-download",
    "severity": "critical",
    "owasp": "ASI-06",
-   "pattern": "(curl|wget|fetch)\\s*[^\\n|>]{0,200}[|>]\\s*(sudo\\s+)?(bash|sh|zsh|python3?|perl)\\b",
+   "pattern": "(curl|wget|fetch)\\s*[^\\n|>]{0,200}[|>]\\s*(sudo\\s+)?(bash|sh|zsh|python3?|perl|node|ruby|php|lua)\\b",
    "description": "Pipes a remote script straight into a shell interpreter.",
    "kind": "intent",
    "context": "any",
@@ -488,12 +488,12 @@
    "category": "rce-download",
    "severity": "high",
    "owasp": "ASI-06",
-   "pattern": "(?<!re\\.)(?<!ast\\.)\\b(?:exec|eval|compile)\\s*\\(\\s*(?!['\\\"])(?!(?:base64|b64d|b64|binascii|codecs|gzip|zlib|marshal|pickle|bytes|bytearray|json|yaml)\\b)(?:os\\.environ|os\\.getenv|environ\\b|getenv\\s*\\(|getattr\\s*\\(|globals\\s*\\(|locals\\s*\\(|vars\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*\\s*[\\[.)])|os\\.system\\s*\\(\\s*(?!['\\\"])(?:os\\.environ|os\\.getenv|getenv\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*)|subprocess\\.(?:run|call|check_call|check_output|Popen)\\s*\\(\\s*(?!['\\\"\\[])(?:os\\.environ|os\\.getenv|getenv\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*)[^\\n]{0,80}?shell\\s*=\\s*(?:True|1)\\b",
+   "pattern": "(?<!re\\.)(?<!ast\\.)\\b(?:exec|eval|compile)\\s*\\(\\s*(?!['\\\"])(?!(?:base64|b64d|b64|binascii|codecs|gzip|zlib|marshal|pickle|bytes|bytearray|json|yaml)\\b)(?:os\\.environ|os\\.getenv|environ\\b|getenv\\s*\\(|getattr\\s*\\(|globals\\s*\\(|locals\\s*\\(|vars\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*\\s*[\\[.)]|f['\\\"][^\\n]{0,400})|os\\.system\\s*\\(\\s*(?!['\\\"])(?:os\\.environ|os\\.getenv|getenv\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*)|subprocess\\.(?:run|call|check_call|check_output|Popen)\\s*\\(\\s*(?!['\\\"\\[])(?:os\\.environ|os\\.getenv|getenv\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|[A-Za-z_]\\w*)[^\\n]{0,80}?shell\\s*=\\s*(?:True|1)\\b|(?:exec|eval)\\s*\\(\\s*['\\\"][^'\\\"\\n]{0,200}['\\\"]\\s*\\+\\s*(?:['\\\"]|[A-Za-z_]\\w*)|exec\\s*\\(\\s*bytes\\s*\\(\\s*\\[[0-9,\\s]{6,}\\]\\s*\\)\\s*\\.\\s*decode\\s*\\(\\s*\\)\\s*\\)|os\\.popen\\s*\\(\\s*(?!['\\\"\\[])(?:os\\.environ|os\\.getenv|getenv\\s*\\(|sys\\.argv|sys\\.stdin|input\\s*\\(|open\\s*\\(|f['\\\"][^\\n]{0,200}|[A-Za-z_]\\w*)",
    "description": "exec/eval/compile/os.system (or subprocess with shell=True) is fed a value built at runtime (env var, input, argv, getattr, file read, variable) instead of a literal - the classic shape of a payload delivered out of band. Decode-call arguments (b64decode etc.) are deliberately excluded here; SS013/SS014/SS042 own those.",
    "kind": "capability",
    "context": "code",
    "requires_pattern": null,
-   "escalate_pattern": "\\b(?:exec|eval|compile|os\\.system|subprocess)\\b"
+   "escalate_pattern": "\\b(?:exec|eval|compile|os\\.system|os\\.popen|subprocess)\\b"
   },
   {
    "id": "SS041",
@@ -501,7 +501,7 @@
    "category": "exfiltration",
    "severity": "critical",
    "owasp": "ASI-09",
-   "pattern": "(?:socket\\.create_connection|socket\\.socket\\s*\\(|\\.connect\\s*\\(|\\.sendto\\s*\\(|\\.sendall\\s*\\()[^\\n]{0,80}?(?<![\\d.])(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}['\\\"]?\\s*[,)]|/dev/tcp/(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}(?:[/:]\\d{1,5})?|\\bnc(?:at)?\\b[^\\n]{0,60}?-[a-zA-Z]*e\\b[^\\n]{0,60}?(?<![\\d.])(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}\\b|(?:curl|wget|requests\\.post|urlopen|fetch\\()[^\\n]{0,100}?(?:os\\.environ|os\\.getenv|getenv\\s*\\()|(?:os\\.environ|os\\.getenv|getenv\\s*\\()[^\\n]{0,100}?(?:curl|wget|requests\\.post|urlopen|fetch\\()",
+   "pattern": "(?:socket\\.create_connection|socket\\.socket\\s*\\(|\\.connect\\s*\\(|\\.sendto\\s*\\(|\\.sendall\\s*\\()[^\\n]{0,80}?(?<![\\d.])(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}['\\\"]?\\s*[,)]|/dev/tcp/(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}(?:[/:]\\d{1,5})?|\\bnc(?:at)?\\b[^\\n]{0,60}?-[a-zA-Z]*e\\b[^\\n]{0,60}?(?<![\\d.])(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255)(?:\\d{1,3}\\.){3}\\d{1,3}\\b|(?:curl|wget|requests\\.post|urlopen|fetch\\()[^\\n]{0,100}?(?:os\\.environ|os\\.getenv|getenv\\s*\\()|(?:os\\.environ|os\\.getenv|getenv\\s*\\()[^\\n]{0,100}?(?:curl|wget|requests\\.post|urlopen|fetch\\()|socket\\.create_connection\\s*\\(\\s*\\(\\s*['\\\"](?!localhost['\\\"])[A-Za-z][\\w.-]{2,}['\\\"]\\s*,\\s*\\d+|/dev/tcp/(?!127\\.|0\\.0\\.0\\.0|255\\.255\\.255\\.255|localhost\\b)(?:[A-Za-z][\\w.-]{2,}|(?:\\d{1,3}\\.){3}\\d{1,3})(?:[/:]\\d{1,5})?",
    "description": "Connects to a hard-coded IP:port (socket shapes, a bash /dev/tcp redirect, or nc -e), or ships environment-variable content to an arbitrary host. A literal address has no DNS lifecycle and no benign reading for a skill. Loopback and broadcast addresses are excluded.",
    "kind": "capability",
    "context": "code",
@@ -521,6 +521,31 @@
    "requires_pattern": "^[ \\t]*(?:[A-Za-z_]\\w*[ \\t]*=[ \\t]*['\\\"]?(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,79}(?![A-Za-z0-9+/])['\\\"]?[ \\t]*$|[A-Za-z_]\\w*[ \\t]*=[ \\t]*['\\\"][0-9a-fA-F]{16,79}['\\\"][ \\t]*$)",
    "multiline": true,
    "escalate_pattern": "\\b(?:exec|eval|compile|subprocess|os\\.system|popen|check_output|check_call|Popen)\\b"
+  },
+  {
+   "id": "SS043",
+   "title": "DNS exfiltration: resolver query built from command substitution",
+   "category": "exfiltration",
+   "severity": "critical",
+   "owasp": "ASI-09",
+   "pattern": "\\b(?:nslookup|dig|host|resolvectl)\\b[^\\n]{0,200}\\$\\([^)\\n]{2,}\\)|\\$\\([^)\\n]{2,}\\)[^\\n]{0,40}\\b(?:nslookup|dig)\\b",
+   "description": "Feeds the output of a command substitution (file read, env dump, secret) into a DNS lookup as a subdomain of an attacker-controlled zone — exfiltration over DNS that never opens a socket.",
+   "kind": "capability",
+   "context": "code",
+   "requires_pattern": null,
+   "escalate_pattern": "\\b(?:cat|base64|xxd|od|head|tail|cut|tr|awk|sed|env|printenv|whoami|ifconfig|hostname)\\b"
+  },
+  {
+   "id": "SS044",
+   "title": "PowerShell download cradle: iex of a downloaded payload",
+   "category": "rce-download",
+   "severity": "critical",
+   "owasp": "ASI-06",
+   "pattern": "\\b(?:iex|invoke-expression)\\b[^\\n]{0,160}(?:downloadstring|downloadfile|downloaddata|net\\.webclient|invoke-webrequest|start-bitstransfer)|(?:downloadstring|downloadfile|downloaddata|net\\.webclient)[^\\n]{0,160}\\|\\s*iex\\b",
+   "description": "Invoke-Expression of a string fetched at runtime (WebClient / Invoke-WebRequest / BITS) — the PowerShell pipe-to-iex cradle that downloads and executes a payload in one line.",
+   "kind": "intent",
+   "context": "any",
+   "requires_pattern": null
   }
  ],
  "_about": "severity = worst case if the rule fires on a hostile artifact (for humans to triage). kind = intent (exploitation: a directive with no benign reading) | capability (dual-use). context = directive (agent instruction files) | code | any. requires_pattern = file-level correlation: the file must also match this, else the hit is not a finding. Cancellation (docs / negation / placeholders) is generic and lives in verifier.py so the catalog stays declarative. `patterns` are candidates, not findings.",
