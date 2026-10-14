@@ -18,9 +18,9 @@ pip install git+https://github.com/artemasmith/skillsentinel.git
 
 ## What it detects (38 rules)
 
-- **Prompt injection** — "ignore previous instructions", role override, developer-mode
+- **Prompt injection** — `ignore previous instructions`, role override, developer-mode
   jailbreaks, system-prompt exfiltration requests, instructions to hide activity
-  from the user or disable safety.
+  from the user, or to `disable safety` guidelines.
 - **Unicode smuggling** — zero-width characters, Unicode tag characters (U+E0000),
   bidi overrides (trojan-source), variation-selector data channels, ANSI escapes.
 - **Credential access & exfiltration** — reads of SSH keys / `.env` / API tokens /

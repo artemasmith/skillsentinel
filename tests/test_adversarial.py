@@ -68,6 +68,11 @@ class DocMentionGuardTests(unittest.TestCase):
     Must pass BEFORE and AFTER the fix: `detects the phrase "ignore all previous
     instructions"`, `pattern: disregard your instructions`, `matches: reveal your
     system prompt` and the regex literal are descriptions, not directives.
+
+    D11 keeps this guard honest by requiring the marking: the quoted phrase with a
+    citation frame ("detects the phrase ...") and the `pattern:`/`matches:` lines as
+    inline code. Unmarked detector prose in a doc is indistinguishable from a
+    payload and is reported as one — see tests/test_doc_surface.py.
     """
 
     def test_doc_lines_produce_no_confirmed_findings(self):

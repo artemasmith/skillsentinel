@@ -10,6 +10,7 @@
    "description": "Classic instruction-override phrasing found in skill/prompt content.",
    "kind": "intent",
    "context": "directive",
+   "doc_surface": true,
    "requires_pattern": null
   },
   {
@@ -22,6 +23,7 @@
    "description": "Attempts to make the agent drop its directives.",
    "kind": "intent",
    "context": "directive",
+   "doc_surface": true,
    "requires_pattern": null
   },
   {
@@ -46,6 +48,7 @@
    "description": "Asks the agent to disclose its system prompt.",
    "kind": "intent",
    "context": "directive",
+   "doc_surface": true,
    "requires_pattern": null
   },
   {
@@ -66,10 +69,11 @@
    "category": "prompt-injection",
    "severity": "high",
    "owasp": "ASI-08",
-   "pattern": "don'?t\\s+(tell|inform|notify|alert)\\s+(the\\s+)?(user|owner|human)|hide\\s+this\\s+(from|action\\s+from)\\s+(the\\s+)?(user|owner)|keep\\s+this\\s+secret\\s+from",
+   "pattern": "(?:do\\s+not|don'?t)\\s+(?:tell|inform|notify|alert)\\s+(?:the\\s+)?(?:user|owner|human)|hide\\s+this\\s+(from|action\\s+from)\\s+(the\\s+)?(user|owner)|keep\\s+this\\s+secret\\s+from",
    "description": "Asks the agent to conceal its actions.",
    "kind": "intent",
    "context": "directive",
+   "doc_surface": true,
    "requires_pattern": null
   },
   {
@@ -82,6 +86,7 @@
    "description": "Safety-bypass instruction.",
    "kind": "intent",
    "context": "directive",
+   "doc_surface": true,
    "requires_pattern": null
   },
   {
@@ -95,6 +100,7 @@
    "description": "Zero-width chars can hide instructions from human review.",
    "kind": "intent",
    "context": "directive",
+   "doc_surface": true,
    "requires_pattern": null
   },
   {
@@ -549,5 +555,5 @@
   }
  ],
  "_about": "severity = worst case if the rule fires on a hostile artifact (for humans to triage). kind = intent (exploitation: a directive with no benign reading) | capability (dual-use). context = directive (agent instruction files) | code | any. requires_pattern = file-level correlation: the file must also match this, else the hit is not a finding. Cancellation (docs / negation / placeholders) is generic and lives in verifier.py so the catalog stays declarative. `patterns` are candidates, not findings.",
- "_version": "0.3.1"
+ "_version": "0.3.2"
 }
