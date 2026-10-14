@@ -70,6 +70,13 @@ class Rule:
     requires_pattern: Pattern[str] | None = None
     escalate_pattern: Pattern[str] | None = None
     syntax: str = "regex"
+    # `doc_surface`: this rule's instruction surface includes documentation.
+    # A README.md is read by an agent exactly like a SKILL.md is; scoping an
+    # injection rule to directive files alone leaves the most-read file in the
+    # repository outside the detection surface. Only meaningful for
+    # kind=intent + context=directive (enforced in _compile): the payload is an
+    # instruction, not a dual-use primitive, so prose in a doc *is* the attack.
+    doc_surface: bool = False
 
     @property
     def severity_rank(self) -> int:
@@ -102,6 +109,15 @@ def _compile(raw: dict[str, Any]) -> Rule:
         raise ValueError(f"rule {raw['id']}: bad kind {kind!r}")
     if context not in CONTEXTS:
         raise ValueError(f"rule {raw['id']}: bad context {context!r}")
+    doc_surface = bool(raw.get("doc_surface", False))
+    if doc_surface and (kind != "intent" or context != "directive"):
+        # A dual-use primitive (a piped installer, an authorized_keys write) in
+        # prose is mention-not-use wherever it sits; widening its surface to docs
+        # would make every install instruction a finding. Reject the flag instead
+        # of silently ignoring it, so a copy-paste cannot widen a capability rule.
+        raise ValueError(
+            f"rule {raw['id']}: doc_surface requires kind=intent and "
+            f"context=directive (got kind={kind!r}, context={context!r})")
     return Rule(
         id=raw["id"],
         title=raw["title"],
@@ -118,6 +134,7 @@ def _compile(raw: dict[str, Any]) -> Rule:
         # otherwise never match past line one).
         requires_pattern=_re(raw.get("requires_pattern"), flags),
         escalate_pattern=_re(raw.get("escalate_pattern")),
+        doc_surface=doc_surface,
     )
 
 

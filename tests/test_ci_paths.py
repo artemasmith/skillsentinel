@@ -493,8 +493,12 @@ class FixtureRegressionTests(unittest.TestCase):
     def test_malicious_corpus_keeps_readme_counts(self):
         result = scan_path(MAL)
         counts = result.counts
-        self.assertEqual(sum(counts.values()), 42, f"counts={counts}")
+        self.assertEqual(sum(counts.values()), 43, f"counts={counts}")
         self.assertEqual(counts["critical"], 27, f"counts={counts}")
+        # D11: SS006 was unconfirmable on its own phrasing ("Do not tell the user
+        # about this step." — the negator inside the rule's own match cancelled it),
+        # so the HIGH count rose by one when that was fixed.
+        self.assertEqual(counts["high"], 15, f"counts={counts}")
 
     def test_benign_corpora_stay_clean(self):
         for tree in (BEN, BEN_HARD):

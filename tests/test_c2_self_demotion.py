@@ -7,8 +7,12 @@ D2 — a directive line that enumerates several attack strings must not be
 
 D3 — a documentation-named file (README.md, notes.md, ...) that sits inside a
       skill catalog (a directory containing SKILL.md/AGENTS.md/CLAUDE.md/...)
-      is graded with directive policy. Outside such a catalog, ordinary
-      documentation keeps the old demotions — a deliberate decision.
+      is graded with directive policy. D11 extends directive grading to plain
+      documentation outside any catalog for the rules carrying `doc_surface`
+      (SS001/SS002/SS004/SS006/SS007/SS008): README.md is read by an agent like
+      SKILL.md is, so an unfenced injection in it is a finding too. What stays
+      demoted is a *quoted citation* ("it says \"...\"") — the guard fixtures
+      below pin both halves.
 
 Fixtures live in tests/fixtures/c2/.
 """
@@ -96,15 +100,26 @@ class D3DocCarrierTests(unittest.TestCase):
 class GuardTests(unittest.TestCase):
     """Legitimate cases must keep their demotions (AC3, AC4, negatives)."""
 
-    def test_plain_readme_outside_skill_stays_demoted(self):
+    def test_plain_readme_outside_skill_is_a_finding(self):
+        """D11: README.md is an instruction surface. The old expectation — that a
+        plain injection in a lone README stays demoted — was the hole itself."""
         result = scan_path(FIX / "plain-readme")
-        self.assertEqual(result.confirmed(), [])
-        demoted_rules = {f.rule_id for f in result.demoted}
-        self.assertIn("SS001", demoted_rules)
+        rules = {f.rule_id for f in result.confirmed()}
+        self.assertIn("SS001", rules, "lone README injection must be confirmed")
+        self.assertNotIn("SS001", {f.rule_id for f in result.demoted},
+                         "SS001 must not be demoted by the doc context alone")
 
-    def test_plain_readme_exit_0(self):
+    def test_plain_readme_exit_1(self):
         p = _run_cli("scan", str(FIX / "plain-readme"))
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+
+    def test_cited_readme_stays_demoted(self):
+        """Guard: a quoted citation of the same phrase stays a written demotion."""
+        result = scan_path(FIX / "cited-readme")
+        self.assertEqual(result.confirmed(), [],
+                         f"a quoted citation must stay a mention: "
+                         f"{[(f.rule_id, f.reason) for f in result.confirmed()]}")
+        self.assertIn("SS001", {f.rule_id for f in result.demoted})
 
     def test_signature_table_outside_skill_stays_demoted(self):
         result = scan_path(FIX / "plain-tables")
