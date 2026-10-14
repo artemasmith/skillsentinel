@@ -9,6 +9,7 @@ benign formatting changes.
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -89,6 +90,35 @@ class WorkflowTests(unittest.TestCase):
 
     def test_sarif_stays_an_artifact(self):
         self.assertIn("actions/upload-artifact", CI_YML)
+
+    def test_security_tab_sarif_never_comes_from_the_fixture_scan(self):
+        """The uploaded SARIF must be the repo self-scan, not our attack corpus.
+
+        tests/fixtures/malicious exists to make the scanner fire: uploading that
+        SARIF as code scanning published ~43 fake critical alerts (all under
+        tests/fixtures/malicious/) on the public repo's Security tab, where every
+        visitor reads them as real defects.
+        """
+        producers = {m.group(2): m.group(1)
+                     for m in re.finditer(r"skillsentinel scan (\S+)[^\n]*?--sarif (\S+)", CI_YML)}
+        uploaded = re.findall(r"(?m)^\s+sarif_file:\s*(\S+)\s*$", CI_YML)
+        self.assertTrue(uploaded, "the Security tab upload must name its SARIF file")
+        for sarif in uploaded:
+            target = producers.get(sarif)
+            if target is None:
+                self.fail(f"{sarif} is uploaded to code scanning but no scan step writes it")
+            self.assertNotIn(
+                "fixtures", target,
+                f"code scanning must not publish the attack corpus ({target})")
+
+    def test_self_scan_step_writes_the_sarif_that_is_uploaded(self):
+        """Without a fresh self-scan SARIF the Security tab keeps stale alerts."""
+        uploaded = re.findall(r"(?m)^\s+sarif_file:\s*(\S+)\s*$", CI_YML)
+        self.assertTrue(uploaded)
+        for sarif in uploaded:
+            self.assertRegex(
+                CI_YML, rf"skillsentinel scan \. [^\n]*--sarif {re.escape(sarif)}",
+                "the repo self-scan must produce the SARIF the Security tab shows")
 
     def test_ci_scans_use_the_timeout_flag(self):
         self.assertGreaterEqual(

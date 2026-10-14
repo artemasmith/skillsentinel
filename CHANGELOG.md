@@ -42,6 +42,12 @@ before the public launch. Three reproduced holes and the class behind them.
 - Our own docs and the detector-grammar fixture mark their specimens structurally
   (fence / inline code / quoted citation) — the self-scan stays clean without
   excluding anything.
+- The Security tab published our own attack corpus: the CI job uploaded the SARIF
+  of the `tests/fixtures/malicious` scan to code scanning, so the public repo
+  showed 43 open alerts (27 of them critical) that were fixtures, not defects —
+  the first thing a visitor reads on a security scanner's repo. The uploaded
+  SARIF is now the repo self-scan (0 results, so the stale alerts close); the
+  fixture scan keeps its exit-1 assertion and its SARIF stays a build artifact.
 
 ### Changed
 
