@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "skillsentinel"
+name = "skillsentinel-cli"
 version = "0.3.1"
 description = "Post-install security scanner for AI-agent skills and prompt configs: prompt injection, unicode smuggling, exfil, miners, persistence, MCP backdoors, drift detection and sandboxed detonation."
 readme = "README.md"
@@ -33,6 +33,7 @@ skillsentinel = "skillsentinel.cli:main"
 Homepage = "https://github.com/artemasmith/skillsentinel"
 Changelog = "https://github.com/artemasmith/skillsentinel/blob/main/CHANGELOG.md"
 Issues = "https://github.com/artemasmith/skillsentinel/issues"
+PyPI = "https://pypi.org/project/skillsentinel-cli/"
 
 [tool.setuptools]
 packages = ["skillsentinel"]

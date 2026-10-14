@@ -81,10 +81,29 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          # The token is never echoed; only its presence is tested.
-          if [ -z "$TWINE_PASSWORD" ]; then
+          # The token value is never echoed; only presence, length and shape are tested.
+          TOKEN="$(printf '%s' "${TWINE_PASSWORD:-}" | tr -d ' \t\r\n')"
+          if [ -z "$TOKEN" ]; then
             echo "PYPI_API_TOKEN is not set — release artifacts built and attached, PyPI publish skipped."
             exit 0
           fi
-          python3 -m pip install --upgrade twine
-          python3 -m twine upload --non-interactive dist/*
+          if [ "$TOKEN" = "${TWINE_PASSWORD}" ]; then
+            echo "token: present, ${#TOKEN} chars, no stray whitespace"
+          else
+            echo "token: present, ${#TOKEN} chars, stray whitespace stripped before use"
+          fi
+          code=$(curl -s -o /tmp/probe.txt -w '%{http_code}' -u "__token:${TOKEN}" \
+                 -F ':action=submit' https://upload.pypi.org/legacy/ || echo 000)
+          echo "token probe (empty form, registers nothing): HTTP ${code}"
+          python3 -m pip install --upgrade --quiet twine
+          set +e
+          TWINE_USERNAME=__token__ TWINE_PASSWORD="$TOKEN" \
+            python3 -m twine upload --non-interactive --disable-progress-bar dist/* > /tmp/twine.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/twine.log
+          if [ "$rc" -ne 0 ]; then
+            msg=$(tr '\n' ' ' < /tmp/twine.log | sed 's/%/%25/g' | cut -c1-800)
+            echo "::error::twine upload failed rc=${rc} token_probe_http=${code} :: ${msg}"
+            exit "$rc"
+          fi

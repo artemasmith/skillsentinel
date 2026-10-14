@@ -68,14 +68,22 @@ Exit code `1` when findings meet the severity threshold — drop it straight int
 
 ## Install
 
-Not yet on PyPI (publication planned — until then install from a tagged git ref):
-
 ```bash
-pipx install "git+https://github.com/artemasmith/skillsentinel@v0.3.1"  # preferred: isolated CLI on PATH
-pip install git+https://github.com/artemasmith/skillsentinel@v0.3.1     # or into a virtualenv
+pipx install skillsentinel-cli      # preferred: isolated CLI on PATH (command: skillsentinel)
+pip install skillsentinel-cli       # or into a virtualenv
 ```
 
-Once the package is published on PyPI these become the plain `pipx install skillsentinel` / `pip install skillsentinel`.
+The distribution is `skillsentinel-cli`, not `skillsentinel`: PyPI rejects the bare
+name as too similar to the pre-existing `skill-sentinel` project (its similarity rule
+ignores `-`, `_` and `.`). The command, the import package and the GitHub repo stay
+`skillsentinel`.
+
+Pin a release from git instead:
+
+```bash
+pipx install "git+https://github.com/artemasmith/skillsentinel@v0.3.1"
+pip install git+https://github.com/artemasmith/skillsentinel@v0.3.1
+```
 
 `pip install --user` works too (the rules catalog is found under the user base as of 0.3.1). Zero runtime dependencies (stdlib only), Python ≥ 3.10. From a checkout no install is needed at all — `python3 -m skillsentinel …` runs in place.
 

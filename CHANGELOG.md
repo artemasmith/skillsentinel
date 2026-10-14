@@ -18,6 +18,13 @@ reproduced by hand before and after the fix.
 - `SS044` PowerShell download cradle: `Invoke-Expression` of a payload fetched at
   runtime (`DownloadString`/`WebClient`/`Invoke-WebRequest`/BITS).
 
+### Changed
+
+- **Packaging — the PyPI distribution is named `skillsentinel-cli`.** PyPI refuses
+  `skillsentinel` as too similar to the pre-existing `skill-sentinel` project (the
+  name-similarity rule normalises `-`, `_` and `.` away), so the distribution name
+  differs while the `skillsentinel` command and import package stay as they are.
+
 ### Fixed
 
 - **Detection — a payload can no longer cancel its own detection by putting the
@@ -52,11 +59,15 @@ reproduced by hand before and after the fix.
   *unmodified* main (verified by stashing the changes); the growth-ratio check now
   only applies above a noise floor and tolerates 12x. A genuinely quadratic rule
   still blows the budget by orders of magnitude.
-- README: the first install command was `pipx install skillsentinel`, but the
-  package is not on PyPI yet — a new user's first command failed. The quickstart
-  path is now the tagged git ref (`pipx install
-  "git+https://github.com/artemasmith/skillsentinel@v0.3.1", verified in a
-  clean venv/pipx), with PyPI marked as planned rather than implied.
+- README: the first install command was `pipx install skillsentinel`, which cannot
+  work — the bare name is not publishable on PyPI (see *Changed* above) and git is
+  the only source until the release is on PyPI. The install section now lists
+  `pipx install skillsentinel-cli` / `pip install skillsentinel-cli` first, with the
+  pinned git ref (`pipx install
+  "git+https://github.com/artemasmith/skillsentinel@v0.3.1"`) as the alternative;
+  both paths verified in a clean venv, and the wheel install was re-checked after
+  the rename (command `skillsentinel`, rules catalog found, benign exit 0,
+  malicious exit 1).
 - Rules loader (`skillsentinel/rules.py`): `pip install --user` installs the
   rules catalog under the *user base* (`<userbase>/share/...`), which the
   loader did not probe — every `scan` aborted with exit 2 ("cannot load rules
