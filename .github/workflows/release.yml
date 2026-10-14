@@ -64,6 +64,29 @@ jobs:
           # Idempotent: re-cutting a tag (e.g. to pick up a CI-only fix) must
           # update the release instead of failing on the assets that are there.
           overwrite_files: true
+      - name: Drop release assets left by an older distribution name
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # `overwrite_files` replaces same-named assets but never removes the
+          # orphans of a rename, so a re-cut tag could ship two wheels. Keep only
+          # the files this build produced, named after the current project name.
+          pyproject="$(python3 - <<'PY'
+          import pathlib, tomllib
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]
+          print(project["name"], project["version"])
+          PY
+          )"
+          dist="$(echo "$pyproject" | cut -d' ' -f1)"
+          ver="$(echo "$pyproject" | cut -d' ' -f2)"
+          keep="$(echo "$dist" | tr '-' '_')"
+          gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name' | while read -r a; do
+            case "$a" in
+              "$keep-$ver"*.whl|"$keep-$ver"*.tar.gz|"$dist-$ver"*.whl|"$dist-$ver"*.tar.gz) ;;
+              *) echo "deleting stale release asset: $a"
+                 gh release delete-asset "$GITHUB_REF_NAME" "$a" -y ;;
+            esac
+          done
 
   publish:
     needs: [build, release]
@@ -98,7 +121,8 @@ jobs:
           python3 -m pip install --upgrade --quiet twine
           set +e
           TWINE_USERNAME=__token__ TWINE_PASSWORD="$TOKEN" \
-            python3 -m twine upload --non-interactive --disable-progress-bar dist/* > /tmp/twine.log 2>&1
+            python3 -m twine upload --non-interactive --disable-progress-bar \
+              --skip-existing dist/* > /tmp/twine.log 2>&1
           rc=$?
           set -e
           cat /tmp/twine.log
