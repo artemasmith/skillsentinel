@@ -7,6 +7,7 @@ red phase. No network is used: the SARIF schema URL is asserted as a literal
 constant, never fetched.
 """
 
+import gzip
 import json
 import os
 import re
@@ -183,6 +184,40 @@ class V7FindScriptsTests(unittest.TestCase):
 
 
 class V8BinaryReportingTests(unittest.TestCase):
+    # Review r1: the synthetic blob below happens to cross the control-byte
+    # density threshold, so it never covered the audit repro. Real-world
+    # binaries — PNG, gzip — carry their entropy in non-control bytes, so the
+    # density sniff calls them text and files_scanned overstates coverage.
+    # The tests below use the real formats; they are RED until the sniff
+    # learns to recognize them.
+
+    DEMO_PNG = REPO / "docs" / "assets" / "demo.png"
+
+    def _assert_tree_reports_binary_split(self, tree, want_text, want_binary):
+        """A tree scan must split its files into text scanned / binary skipped."""
+        p = run_cli("scan", str(tree), "--json")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        payload = json.loads(p.stdout)
+        self.assertEqual(payload["files_scanned"], want_text,
+                         f"files_scanned must count text files only: "
+                         f"{payload['files_scanned']}")
+        binary_fields = [
+            f"{path}={val}"
+            for path, val in _walk_numbers(payload)
+            if "binary" in path[-1].lower() and isinstance(val, int)
+            and val >= want_binary
+        ]
+        self.assertTrue(binary_fields,
+                        "JSON must expose the binary skip count "
+                        f"(e.g. binary_files_skipped): {payload!r}")
+
+        p = run_cli("scan", str(tree))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertRegex(p.stdout, rf"\b{want_text}\s+text\b",
+                         f"no text count in summary: {p.stdout!r}")
+        self.assertRegex(p.stdout, rf"\b{want_binary}\s+binary\s+skipped\b",
+                         f"no binary-skip count in summary: {p.stdout!r}")
+
     def test_v8_binary_files_reported_separately(self):
         d = make_tmp(self)
         (d / "SKILL.md").write_text("# benign\nhello\n", encoding="utf-8")
@@ -211,6 +246,55 @@ class V8BinaryReportingTests(unittest.TestCase):
                          f"no text count in summary: {p.stdout!r}")
         self.assertRegex(p.stdout, r"\b1\s+binary\b",
                          f"no binary count in summary: {p.stdout!r}")
+
+    def test_v8_real_png_in_tree_reported_as_binary(self):
+        d = make_tmp(self)
+        shutil.copy(self.DEMO_PNG, d / "demo.png")
+        (d / "SKILL.md").write_text("# benign\nhello\n", encoding="utf-8")
+        self._assert_tree_reports_binary_split(d, want_text=1, want_binary=1)
+
+    def test_v8_gzip_file_in_tree_reported_as_binary(self):
+        d = make_tmp(self)
+        (d / "SKILL.md").write_text("# benign\nhello\n", encoding="utf-8")
+        doc = "\n".join(f"# Section {i}\n" +
+                        "SkillSentinel scans for supply-chain issues. " * 8
+                        for i in range(12))
+        (d / "doc.gz").write_bytes(gzip.compress(doc.encode("utf-8")))
+        self._assert_tree_reports_binary_split(d, want_text=1, want_binary=1)
+
+    def test_v8_single_png_target_not_counted_as_text(self):
+        d = make_tmp(self)
+        png = d / "demo.png"
+        shutil.copy(self.DEMO_PNG, png)
+        p = run_cli("scan", str(png))
+        combined = p.stdout + p.stderr
+        self.assertNotRegex(combined, r"\b1\s+text\b",
+                            "a lone PNG must not be counted as a scanned "
+                            f"text file: {combined!r}")
+        # Either the summary line counts it as binary-skipped, or the (now
+        # empty) scan is refused — both keep files_scanned honest; neither
+        # may present the PNG as scanned text.
+        self.assertTrue(
+            re.search(r"\b1\s+binary\s+skipped\b", combined)
+            or p.returncode == 2,
+            f"PNG neither reported binary-skipped nor refused: "
+            f"rc={p.returncode} stdout={p.stdout!r} stderr={p.stderr!r}")
+
+    def test_v8_plain_utf8_text_stays_in_files_scanned(self):
+        # No-regression guard for the fix the tests above demand: plain
+        # NUL-free ASCII text must keep counting as scanned text.
+        d = make_tmp(self)
+        (d / "SKILL.md").write_text(
+            "# benign\nplain NUL-free ASCII notes, nothing binary\n",
+            encoding="utf-8")
+        p = run_cli("scan", str(d), "--json")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        payload = json.loads(p.stdout)
+        self.assertEqual(payload["files_scanned"], 1,
+                         f"text file must stay scannable: {payload!r}")
+        self.assertEqual(payload["binary_files_skipped"], 0,
+                         f"text file must not be skipped as binary: "
+                         f"{payload!r}")
 
 
 def _walk_numbers(node, path=()):
