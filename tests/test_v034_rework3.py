@@ -36,6 +36,14 @@ T6 guards the live corpus itself: skipUnless ~/.hermes/skills exists;
 the number of exploitable findings must not exceed the base deb3537
 slice (4, measured 2026-10-20).
 
+Round 4 (2026-10-20) replaced T4: base deb3537 itself CONFIRMS SS006 on
+oss-launch/SKILL.md:89, so the original T4 assertion — a CLEAN scan of
+that line — over-constrained the card. T4 is now a live-corpus
+base-parity guard (LiveCorpusBaseParityTests): the set of exploitable
+(file, rule_id) pairs must be a subset of the slice recorded at base
+deb3537 (BASE_PARITY_SLICE). The OSS_LINE_89 constant is kept for the
+record.
+
 No network: every case drives the CLI as a subprocess (the run_cli
 style of test_v034_rework2.py / test_v034_rework1.py).
 """
@@ -61,6 +69,18 @@ CONFIRMING = ("exploitable", "confirmed")
 # measured 2026-10-20 (review round 3).
 BASELINE_EXPLOITABLE = 4
 
+# Round-4 base-parity slice: the exact exploitable (file, rule_id) pairs
+# on the ~/.hermes/skills tree at base deb3537, measured 2026-10-20
+# (review round 4). Note it INCLUDES 'oss-launch/SKILL.md SS006' — base
+# confirms there — which is why T4's clean-scan of that line was
+# over-constrained and got replaced (see LiveCorpusBaseParityTests).
+BASE_PARITY_SLICE = {
+    ".curator_ledger.jsonl SS037",
+    "software-development/hermes-agent-skill-authoring/SKILL.md SS037",
+    "autonomous-ai-agents/hermes-agent/references/themes.md SS006",
+    "oss-launch/SKILL.md SS006",
+}
+
 # Probe (1), verbatim: productivity/product-price-monitor/SKILL.md:114.
 # The sensitive path `~/.hermes/.env` is a parenthetical config SOURCE
 # ("токен из" = token FROM), not the object of the send.
@@ -70,8 +90,10 @@ PPM_LINE_114 = (
 )
 
 # Probe (2), verbatim: oss-launch/SKILL.md:89 — quoted attack strings
-# governed by «do NOT …»; the ellipsis inside the quote must not end the
-# cancel word's segment.
+# governed by «do NOT …». Round 4 (2026-10-20): no test scans this line
+# any more — base deb3537 itself confirms SS006 on it, so the old clean-
+# scan assertion over-constrained the card; the constant is kept for the
+# record and the guard moved to LiveCorpusBaseParityTests.
 OSS_LINE_89 = (
     "- **Точность детектора мерить на реальном корпусе целевого артефакта, "
     "а не на своих benign-фикстурах.** Корпус agent-скиллов — сам по себе "
@@ -229,13 +251,32 @@ class ParentheticalTwinGuardTests(_SingleLineScanTestCase):
                 self.assert_ss046_confirmed(self.scan_line(text), text)
 
 
-class QuoteEllipsisGovernanceTests(_SingleLineScanTestCase):
-    """T4: oss-launch/SKILL.md:89 verbatim — the quoted attack strings
-    are governed by «do NOT …»; the ellipsis inside the quote must not
-    cut the cancel word out of the segment."""
+class LiveCorpusBaseParityTests(unittest.TestCase):
+    """T4, replaced by review round 4 (2026-10-20): the original test
+    demanded a CLEAN scan of OSS_LINE_89, but base deb3537 itself
+    CONFIRMS SS006 on oss-launch/SKILL.md:89 — the assertion
+    over-constrained the card. The guard is now base parity: on the live
+    corpus, the set of exploitable (file, rule_id) pairs must be a
+    SUBSET of the base deb3537 slice (BASE_PARITY_SLICE). May already
+    pass at HEAD — it is a guard for the round-4+ reworks, not red."""
 
-    def test_oss_launch_line_89_scans_clean(self):
-        self.assert_clean(self.scan_line(OSS_LINE_89), OSS_LINE_89)
+    @unittest.skipUnless(LIVE_SKILLS.is_dir(),
+                         f"live corpus {LIVE_SKILLS} not present")
+    def test_live_corpus_exploitable_subset_of_base_slice(self):
+        proc = run_cli("scan", str(LIVE_SKILLS), "--json", timeout=300)
+        self.assertIn(proc.returncode, (0, 1),
+                      f"scan of the live corpus failed: "
+                      f"rc={proc.returncode} stderr={proc.stderr!r}")
+        payload = json.loads(proc.stdout)
+        pairs = {f"{f['file']} {f['rule_id']}"
+                 for f in payload["findings"]
+                 if f.get("verdict") == "exploitable"}
+        extra = sorted(pairs - BASE_PARITY_SLICE)
+        self.assertEqual(
+            extra, [],
+            f"live corpus {LIVE_SKILLS} has exploitable (file, rule_id) "
+            f"pairs outside the base deb3537 slice "
+            f"{sorted(BASE_PARITY_SLICE)}: {extra}")
 
 
 class DetectorEvasionReferenceTests(_SingleLineScanTestCase):
