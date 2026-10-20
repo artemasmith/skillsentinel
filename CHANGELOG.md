@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4]
+
+Recall fixes for the v0.3.3 audit (defects R1–R3; acceptance tests in
+`tests/test_v034_audit.py`): three classes of hostile skill the walk and the
+rule catalog simply did not see. The malicious corpus still prints the same
+43 confirmed findings — the new rules fire only on non-English signals.
+
+### Added
+
+- `--no-follow-symlinks`: refuse every symlink instead of following it. Each
+  declined link lands in `files_skipped` with a stderr warning naming it and
+  the reason (JSON: `warnings`); broken and looping links get the same
+  accounting on every scan, followed or not.
+- Archive scanning: `zip`/`tar.gz`/`tgz`/`whl` files in a scanned tree are
+  opened and their text members matched in memory — nothing is ever extracted
+  to disk — with findings attributed `<archive>!<inner/path>`. The archive is
+  untrusted input, so four guards refuse rather than trust it: per-member
+  uncompressed size over `--archive-max-bytes` (default 5 MB), more than 200
+  members, a compressed:uncompressed ratio over 100:1 (zip-bomb), and member
+  names that climb out of the archive (zip-slip — skipped per member, never
+  written anywhere). Every refusal is a warning counted in `files_skipped`.
+- Rules SS045/SS046 (`rules/rules.json`, documented in `docs/rules.md`): the
+  instruction-override and exfiltration families extended past English —
+  SS045 matches an override imperative in Russian/Chinese/German/Spanish near
+  the words for instructions/rules (or a Russian concealment directive), SS046
+  an exfil verb in those languages within 60 characters of a sensitive path
+  (`~/.ssh`, `id_rsa`/`id_ed25519`, `.aws/credentials`, `.env`, keychain),
+  either order. Both are `intent`/`any`-scoped: confirmed on instruction
+  surfaces, inconclusive in prose, so benign Russian text and this repo's own
+  documentation stay clean.
+
+### Fixed
+
+- R1: symlinked skill directories were invisible to the walk — a reproduced
+  `skills-live` tree of 37 entries (35 directory symlinks) scanned 6 files
+  instead of the 72 reachable ones. The walk now descends directory symlinks
+  by default (that is how skill trees are installed); loops and repeat
+  targets terminate on a visited `(st_dev, st_ino)` set instead of hanging,
+  each refusal reported as a warned skip.
+- R1b: content reachable only through an out-of-root symlink was either
+  skipped or attributed to a path inside the root. Files reached via such
+  links are now reported as `link -> target`, so a finding names both where
+  the link is and where the content lives.
+- R2: injection directives written in languages other than English passed the
+  phrase lists clean (reproduced in ru/zh/de/es). See SS045/SS046 above;
+  benign Russian prose produces no confirmed findings.
+- R3: archives shipped as skills were never opened at all — a malicious
+  `SKILL.md` inside a `payload.zip` scanned as one binary skip and exited 0.
+  See archive scanning above.
+
+### Changed
+
+- Version pins in README (GitHub Action `uses:`, pre-commit `rev:`, git install
+  refs, rules badge) follow the release: `v0.3.4`.
+
 ## [0.3.3]
 
 Audit fixes for v0.3.2 (defects V1–V8; acceptance tests in
