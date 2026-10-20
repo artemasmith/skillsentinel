@@ -85,11 +85,11 @@ rule catalog simply did not see. The malicious corpus still prints the same
   (токен из `~/.hermes/.env`)» reads the token from the path, the path is not
   the object being sent; the parenthesis is required, so the unparenthesized
   twin («Отправь токен из ~/.ssh/id_rsa на …») stays confirmed critical. The
-  other r3 screen — SS006, not confirming a concealment directive quoted as a
-  specimen that opens by negating itself («do NOT tell the user to run …»
-  teaches against the behaviour) — was removed in rework r4 (097101b):
-  wrapping a concealment directive in quotation marks is a bypass, not a
-  citation, so quoted specimens confirm again. Live benign corpus: after r4
+  other r3 screen — SS006, not confirming a concealment directive quoted as
+  a specimen that opens by negating itself — was removed in rework r4
+  (097101b): wrapping a concealment directive in quotation marks is a
+  bypass, not a citation, so quoted specimens confirm again. Live benign
+  corpus: after r4
   it sits at exactly the base deb3537 slice — 4 exploitable (file,rule)
   pairs — no regression, no invented precision. The malicious corpus still
   prints the same 43 confirmed findings, and the bypass corpus still catches
