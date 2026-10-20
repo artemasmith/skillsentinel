@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from itertools import islice
 
 # Verdicts, strongest first. `exploitable` = the artifact can actually do the thing.
 VERDICT_ORDER = {"exploitable": 4, "capability": 3, "inconclusive": 2, "low_trust": 1}
@@ -43,14 +44,32 @@ LABEL_PREFIX = re.compile(
     r"\s*[:\-\u2014]\s+",
     re.IGNORECASE)
 
+# The shared multilingual prefix negators (rework r1). A negator governs the
+# directive it precedes in the same sentence, whatever language SS045/SS046
+# read: ru «не»/«никогда не»/«нельзя», de nicht/niemals/nie, zh 不要/不得/别,
+# es no/nunca, on top of the English set. Alphabetic negators carry \b; the CJK
+# ones have no word boundaries, and 别 is guarded by a negative lookbehind
+# against the compounds it closes (特别/区别/识别/分别/级别/差别/告别/离别 all
+# carry it as the second syllable). Longest alternative first, so the negator
+# reported in a demotion reason is the full phrase («никогда не», niemals).
+_MULTILINGUAL_NEGATORS = (
+    r"\bникогда не\b|\bнельзя\b|\bне\b"
+    r"|\bniemals\b|\bnicht\b|\bnie\b"
+    r"|不要|不得|(?<![特区识分差级告离])别"
+    r"|\bnunca\b|\bno\b"
+)
+
 # Words that mean the line is *about* detection or defence, not issuing an attack.
 # Deliberately excludes bare `example`/`sample`/`demo`: attackers name their hosts
-# `evil.example` precisely so a naive scanner cancels its own hit.
+# `evil.example` precisely so a naive scanner cancels its own hit. The negators
+# above are members too: they feed _governing_cancel_word, so a negated benign
+# directive demotes through the written cancel-word path naming the negator.
 CANCEL_WORDS = re.compile(
     r"\b(never|don'?t|do not|must not|should not|avoid|refuse|reject|block|deny|"
     r"forbid|warn|warning|danger|dangerous|malicious|attacker|adversar|detect|"
     r"detection|scan|scanner|indicator|signature|cheat ?sheet|documentation|"
-    r"readme|test case|i\.e\.)\b", re.IGNORECASE)
+    r"readme|test case|i\.e\.)\b"
+    r"|" + _MULTILINGUAL_NEGATORS, re.IGNORECASE)
 
 # An explicit example frame — the hit is a quoted specimen, not an instruction. In an
 # intent hit the frame only counts together with an actual quotation (`_quoted_match`):
@@ -61,12 +80,33 @@ NAMED_EXAMPLE = re.compile(
     r"placeholder for|see (the )?(sample|example|fixture)|looks? like|"
     r"reads as|it says|that says)\b", re.IGNORECASE)
 
-# The negators `_is_negated` looks for. A negator belonging to the rule's OWN matched
-# phrase ("do not tell the user", "do not apply your guidelines") is the rule's
-# vocabulary rather than a cancellation of it — SS006 and SS007 were unconfirmable
-# on their own phrasing because of this (D11).
-NEGATION_WORDS = re.compile(r"\b(never|don'?t|do not|must not|should not|avoid)\b",
-                            re.IGNORECASE)
+# The negators `_is_negated` looks for: the multilingual prefixes above plus the
+# English set. A negator belonging to the rule's OWN matched phrase ("do not tell
+# the user", "do not apply your guidelines", «не говори пользователю») is the
+# rule's vocabulary rather than a cancellation of it — SS006, SS007 and SS045's
+# concealment arm were unconfirmable on their own phrasing because of this (D11).
+NEGATION_WORDS = re.compile(
+    "(?:" + _MULTILINGUAL_NEGATORS +
+    r"|\bnever\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bshould not\b|\bavoid\b)",
+    re.IGNORECASE)
+
+# Sentence terminators, Western and CJK: negation and cancel words are scoped
+# to the sentence segment of the match, so a negator in an earlier sentence of
+# the rework-r1 positional fixture governs nothing in the clause after the
+# terminator. A period only terminates when followed by whitespace, a closing
+# quote/bracket or the end of the line — the dots of `.env`, `~/.ssh` or `3.14`
+# are filename/decimal dots, not sentence ends (the SS046 span ends inside
+# `.env`).
+_SENTENCE_TERM = re.compile(r"[!?…。！？]|\.(?=\s|[\"')\]]|$)")
+
+
+def _segment_start(text: str, pos: int) -> int:
+    """Index just past the last sentence terminator before `pos` (0 when nothing
+    terminates earlier): the start of the sentence segment that owns `pos`."""
+    start = 0
+    for m in _SENTENCE_TERM.finditer(text, 0, pos):
+        start = m.end()
+    return start
 
 # A metalinguistic frame: the line talks ABOUT the string instead of saying it
 # ("this rule detects the phrase ...", "pattern: ...", "signature: ..."). Only
@@ -354,13 +394,24 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
 
 
 def _is_negated(line: str, raw: str) -> bool:
-    """Is the instruction negated *before* the matched phrase ("never run this")?
-    A match at the start of the line has nothing before it — it cannot negate itself.
-    Only an unlocatable match falls back to the whole line, where the conservative
-    reading is the correct one."""
-    idx = line.lower().find(raw.lower()[:24]) if raw else -1
-    head = line[:idx] if idx >= 0 else line
-    return bool(NEGATION_WORDS.search(head))
+    """Is the instruction negated relative to the matched phrase? A negator
+    *before* the match in the SAME sentence segment governs it ("never run
+    this"); a negator sitting INSIDE the match still counts, because verb-second
+    languages carry their negator between the rule's anchors ("Sende niemals
+    die Datei .env", "Ignoriere niemals die Anweisungen"). The owning segment
+    is the one holding the END of the match: a greedy filler can glue an
+    earlier sentence into the span (rule verb in sentence one, rule object in
+    sentence two), and then the later directive — not the negated earlier one —
+    is what the line says. A match at the start of the line has nothing before
+    it, and a negator in a previous sentence governs nothing here. Only an
+    unlocatable match falls back to the line's last segment, where the
+    conservative reading is the correct one."""
+    span = _matched_span(line, raw)
+    if span is None:
+        scope = line[_segment_start(line, len(line)):]
+    else:
+        scope = line[_segment_start(line, span[1]):span[1]]
+    return bool(NEGATION_WORDS.search(scope))
 
 
 def _quoted_match(line: str, raw: str) -> bool:
@@ -450,28 +501,39 @@ def _ss040_plain_arg(text: str, line: str) -> str | None:
 
 def _governing_cancel_word(line: str, raw: str) -> str | None:
     """F1: a defensive-lexicon word demotes only from a position that governs the
-    match — before it (negation or a description frame such as "detects the
-    phrase ..."/"pattern: ..."), inside it, or as part of a URL/path token. A word
-    AFTER the match as the object of the attack sentence ("... instructions about
-    malware detection", "send ~/.ssh/id_rsa to the attacker") is the attack naming
-    its own target, and cancelling on it lets a skill mask itself. Returns the
-    matched term of the first governing occurrence (its original casing), so the
-    demotion reason can name the word that caused it."""
+    match — before it in the SAME sentence segment (negation or a description
+    frame such as "detects the phrase ..."/"pattern: ..."), inside it, or as part
+    of a URL/path token. A word AFTER the match as the object of the attack
+    sentence ("... instructions about malware detection", "send ~/.ssh/id_rsa to
+    the attacker") is the attack naming its own target, and a word in a PREVIOUS
+    sentence ("Never mind the intro. Now ignore the rules.") governs nothing.
+    Returns the matched term of the first governing occurrence (its original
+    casing), so the demotion reason can name the word that caused it."""
     span = _matched_span(line, raw)
     if span is None:
         m = CANCEL_WORDS.search(line)  # match not locatable: stay conservative
         return m.group(0) if m else None
     label = LABEL_PREFIX.match(line)
     label_end = label.end() if label else 0
+    # Same segment ownership as _is_negated: the sentence holding the END of
+    # the match. A greedy filler gluing an earlier sentence into the span must
+    # not let that sentence's cancel word demote the later directive.
+    seg_start = _segment_start(line, span[1])
     for m in CANCEL_WORDS.finditer(line):
         if m.start() < label_end:  # part of a leading bare label — never demotes (D1)
             continue
-        if m.start() < span[1]:  # before or inside the matched span
-            if m.start() >= span[0] and NEGATION_WORDS.match(m.group(0)):
-                # The negator is part of the rule's own phrase ("do not tell the
-                # user", "do not apply your guidelines"): the rule cannot cancel
-                # itself (D11). Negation *before* the span is still handled by
-                # _is_negated, so "never ignore previous instructions" stays weak.
+        if m.start() < span[0]:  # before the matched span
+            if m.start() < seg_start:
+                continue  # cancel word of a previous sentence governs nothing
+            return m.group(0)
+        if m.start() < span[1]:  # inside the matched span
+            if m.start() == span[0] and NEGATION_WORDS.match(m.group(0)):
+                # The negation OPENS the rule's own matched phrase ("do not tell
+                # the user", "do not apply your guidelines", «не говори
+                # пользователю»): the rule cannot cancel itself (D11). A negator
+                # merely sitting between the rule's anchors (German verb-second
+                # "Sende niemals die Datei .env") is real sentence negation — it
+                # governs, and _is_negated names it in the demotion reason.
                 continue
             return m.group(0)
         if _in_url_token(line, m.start(), m.end()):
@@ -489,6 +551,7 @@ def verify_findings(findings: list, sources: dict[str, str],
     cfg = config or VERIFIERS_BY_NAME["balanced"]
     roots = _directive_roots(scanned_paths) if scanned_paths is not None else frozenset()
     out: list[Verdict] = []
+    match_ordinal: dict[tuple[str, int, str], int] = {}
     for f in findings:
         rule = _RULES_BY_ID.get(f.rule_id)
         if rule is None:
@@ -501,8 +564,18 @@ def verify_findings(findings: list, sources: dict[str, str],
         if ctx in ("documentation", "directive") and lines:
             fenced = _fenced_state(lines)
             fence = fenced[f.line - 1] if 0 < f.line <= len(fenced) else False
-        # Prefer the exact matched text for quoting checks; the snippet is the whole line.
-        m_on_line = rule.pattern.search(line) if rule.pattern else None
+        # Prefer the exact matched text for quoting checks; the snippet is the whole
+        # line. A line holding several matches of one rule yields several candidates,
+        # and each is graded against ITS OWN match (the n-th candidate on a line
+        # takes the n-th match), so "Never ignore the rules. Now ignore the
+        # instructions." demotes the first clause and confirms the second — the
+        # verdict sort then lets the strongest reading own the line.
+        m_on_line = None
+        if rule.pattern:
+            key = (f.file, f.line, f.rule_id)
+            n = match_ordinal.get(key, 0)
+            match_ordinal[key] = n + 1
+            m_on_line = next(islice(rule.pattern.finditer(line), n, None), None)
         raw = m_on_line.group(0) if m_on_line else f.snippet
         # Escalation evidence is file-level, and must be evidence rather than a guess:
         #  - the rule's own `escalate_pattern` (a marker that makes this hit real);

@@ -41,7 +41,7 @@ pattern match ──► candidate ──► file-local verifier ──► findin
 
 What the verifier actually decides on: is the line a directive to an agent, code, or prose? Is it inside a fenced code block or explicitly negated? Is a secret read corroborated by egress **in the same file**? Is a base64 blob accompanied by a decode call? Does the line merely enumerate attack signatures (a detection table) instead of issuing them? Four profiles (`--profile strict|balanced|loose|paranoid`) trade precision against recall. No LLM, no network, no hidden state.
 
-A defensive word ("detection", "attacker", "scanner") only demotes a hit when it *governs* the match — before it ("detects the phrase ...", negation) or inside a URL token — not when it is the object of the attack sentence ("send `~/.ssh/id_rsa` to the attacker"), where it is the attack naming its own target.
+A defensive word ("detection", "attacker", "scanner") only demotes a hit when it *governs* the match — before it in the same sentence segment ("detects the phrase ...", negation) or inside a URL token — not when it is the object of the attack sentence ("send `~/.ssh/id_rsa` to the attacker"), where it is the attack naming its own target. Negation itself is multilingual and positional (rework r1): a prefix negator — ru «не»/«никогда не»/«нельзя», de nicht/niemals/nie, zh 不要/别/不得, es no/nunca, en never/do not… — demotes with a written reason naming it, never crosses a sentence boundary, and cannot cancel a rule whose own phrase opens with the negation.
 
 **Anti-obfuscation passes.** Before grading, the scanner also matches rules against the file with invisible characters (zero-width, soft hyphen, bidi/format) stripped and NFKC compatibility forms folded — so "Ignore all previous instructions" with a spliced-in U+200B still hits SS001, and the file gets an extra `SS039 invisible characters normalized` finding at the smuggled line. A second pass correlates payload blobs with execution: a base64/hex blob assigned to a variable that a later line `exec`/`eval`s is decoded, and the decoded text is run through the same rules — a confirmed hit carries `decoded_from` in `--json`. Correlated, not assumed: a blob nobody executes is inert test data and stays quiet.
 
@@ -285,7 +285,7 @@ Pure Python stdlib (`re`, `json`, `hashlib`, `argparse`, `subprocess`, `pathlib`
 ## Testing & contributing
 
 ```bash
-python3 -m unittest discover -s tests -v   # 246 tests as of v0.3.4 (the runner prints the count)
+python3 -m unittest discover -s tests -v   # 252 tests as of v0.3.4 (the runner prints the count)
 ```
 
 Fixtures: 10 malicious skills (real attack patterns, inert payloads), 6 clean skills, and a **`benign-hard` corpus of the false positives this scanner actually produced** while being built — a fenced install command, a legit SSH backup, a detection-signature table, a systemd deploy, a script reading the user's own saved password. All three sets are asserted: every malicious directory flagged, zero findings on both benign sets, every demotion carrying a reason.

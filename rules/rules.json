@@ -559,7 +559,7 @@
    "category": "prompt-injection",
    "severity": "critical",
    "owasp": "ASI-01",
-   "pattern": "(?:игнорируй(?:те)?|забудь(?:те)?|отмени[^\n]{0,15}все)[^\n]{0,50}(?:инструкци|правил|указани|запрос)|(?:инструкци|правил|указани)[^\n]{0,50}(?:игнорируй(?:те)?|забудь(?:te)?|забудь(?:те)?)|не[ \\t](?:говори|сообщай|упоминай|рассказывай)[^\n]{0,40}пользовател|(?:忽略|无视)[^\n]{0,20}(?:指令|指示|规则)|(?:指令|指示|规则)[^\n]{0,20}(?:忽略|无视)|ignoriere[^\n]{0,60}(?:anweisung|regeln|instruktion)|(?:anweisung|regeln|instruktion)[^\n]{0,60}ignoriere|\\bignora\\b[^\\n]{0,40}(?:instruccion|indicacion|regla)|(?:instruccion|indicacion|regla)[^\\n]{0,40}\\bignora\\b",
+   "pattern": "(?:игнорируй(?:те)?|игнорировать|забудь(?:те)?|отмени[^\n]{0,15}все)[^\n]{0,50}(?:инструкци|правил|указани|запрос)|(?:инструкци|правил|указани)[^\n]{0,50}(?:игнорируй(?:те)?|игнорировать|забудь(?:te)?|забудь(?:те)?)|не[ \\t](?:говори|сообщай|упоминай|рассказывай)[^\n]{0,40}пользовател|(?:忽略|无视)[^\n]{0,20}(?:指令|指示|规则)|(?:指令|指示|规则)[^\n]{0,20}(?:忽略|无视)|ignoriere[^\n]{0,60}(?:anweisung|regeln|instruktion)|(?:anweisung|regeln|instruktion)[^\n]{0,60}ignoriere|\\b(?:ignora|ignore)s?\\b[^\\n]{0,40}(?:instruccion|indicacion|regla)|(?:instruccion|indicacion|regla)[^\\n]{0,40}\\b(?:ignora|ignore)s?\\b",
    "description": "Same instruction-override family as SS001/SS002 in the languages English-only phrase lists miss: an imperative override verb (Russian игнорируй/забудь, Chinese 忽略/无视, German ignoriere, Spanish ignora) within one line of the words for instructions/rules, or a Russian concealment directive (не говори/сообщай/упоминай … пользовател). Severity semantics are the family's: critical when the verifier confirms it on an instruction surface; mentions in prose grade inconclusive as usual.",
    "kind": "intent",
    "context": "any",
@@ -578,6 +578,6 @@
    "requires_pattern": null
   }
  ],
- "_about": "severity = worst case if the rule fires on a hostile artifact (for humans to triage). kind = intent (exploitation: a directive with no benign reading) | capability (dual-use). context = directive (agent instruction files) | code | any. requires_pattern = file-level correlation: the file must also match this, else the hit is not a finding. Cancellation (docs / negation / placeholders) is generic and lives in verifier.py so the catalog stays declarative. `patterns` are candidates, not findings.",
+ "_about": "severity = worst case if the rule fires on a hostile artifact (for humans to triage). kind = intent (exploitation: a directive with no benign reading) | capability (dual-use). context = directive (agent instruction files) | code | any. requires_pattern = file-level correlation: the file must also match this, else the hit is not a finding. Cancellation — docs/placeholder frames and MULTILINGUAL positional negation (ru/de/zh/es/en prefix negators, sentence-scoped) — is generic and lives in verifier.py so the catalog stays declarative. `patterns` are candidates, not findings.",
  "_version": "0.3.4"
 }
