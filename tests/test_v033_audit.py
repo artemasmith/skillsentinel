@@ -15,11 +15,35 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 has no stdlib tomllib
+    tomllib = None
+
 REPO = Path(__file__).resolve().parent.parent
+
+
+def pyproject_version(text=None):
+    """Return ``[project] version`` from pyproject.toml.
+
+    The package advertises ``requires-python = ">=3.10"`` and CI runs 3.10,
+    which has no stdlib ``tomllib`` — fall back to a section-scoped regex
+    scan instead of skipping the assertion on that interpreter.
+    """
+    if text is None:
+        text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    if tomllib is not None:
+        return tomllib.loads(text)["project"]["version"]
+    section = re.search(r"^\[project\]\s*$(.*?)(?=^\[|\Z)", text,
+                        re.M | re.S)
+    assert section, "pyproject.toml has no [project] section"
+    m = re.search(r'^version\s*=\s*"([^"]+)"', section.group(1), re.M)
+    assert m, "pyproject.toml [project] has no version"
+    return m.group(1)
+
 sys.path.insert(0, str(REPO))
 
 import skillsentinel  # noqa: E402
@@ -406,9 +430,7 @@ def _walk_numbers(node, path=()):
 
 class Version033Tests(unittest.TestCase):
     def test_version_is_033_everywhere(self):
-        pyproject = tomllib.loads((REPO / "pyproject.toml")
-                                  .read_text(encoding="utf-8"))
-        self.assertEqual(pyproject["project"]["version"], "0.3.3")
+        self.assertEqual(pyproject_version(), "0.3.3")
         self.assertEqual(skillsentinel.__version__, "0.3.3")
 
     def test_version_changelog_documents_033(self):
