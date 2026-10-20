@@ -384,7 +384,12 @@ def _looks_binary(head: bytes) -> bool:
     smuggling must keep getting scanned), and the UTF-16 escape still holds
     at a stricter >= 0.95 printable bar — random bytes luck into ~0.85-0.9
     printable UTF-16 (a gzip head sits at ~0.88), real UTF-16 text is
-    essentially all printable. Below both densities a file stays scannable —
+    essentially all printable. That branch also knows a NUL rule: a
+    single-byte legacy encoding (cp1251, koi8-r, latin-1) never encodes a
+    real character as NUL, so an undecodable non-print-dense chunk with
+    zero NUL bytes is legacy text and stays scannable — real binaries
+    carry NULs in their first chunk. Below both densities a file stays
+    scannable —
     a bytecode blob with an embedded ASCII payload stays in the scan
     (latin-1 keeps its attack strings visible); only control or
     undecodable non-print soup is skipped.
@@ -402,6 +407,14 @@ def _looks_binary(head: bytes) -> bool:
         try:
             head.decode("utf-8")
         except UnicodeDecodeError:
+            # V8 (review r2): a single-byte legacy encoding (cp1251, koi8-r,
+            # latin-1) can never encode a real character as NUL, so its
+            # high-byte-dense prose carries zero NULs, while real binaries
+            # all carry NULs in the first chunk. NUL-free soup here is
+            # legacy text — keep it scannable instead of skipping a hostile
+            # file as "binary" and reporting a false clean.
+            if head.count(0) == 0:
+                return False
             return not _utf16_mostly_printable(head, 0.95)
     return False
 

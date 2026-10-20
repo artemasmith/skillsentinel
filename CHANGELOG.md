@@ -50,7 +50,9 @@ still prints the same 43 confirmed findings.
   only, the summary line shows the split (`N text, M binary skipped`), and
   `--json` exposes `binary_files_skipped`. A bytecode blob with an embedded
   ASCII payload (sparse controls) stays scannable, so detection counts did
-  not move.
+  not move. Legacy single-byte text (cp1251/koi8-r/latin-1 — dense high
+  bytes, invalid UTF-8, zero NULs) also stays scannable; only NUL-carrying
+  non-print soup is skipped.
 
 ### Changed
 
