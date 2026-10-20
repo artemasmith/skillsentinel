@@ -119,12 +119,19 @@ def cancel_pattern_for(rule_id: str) -> re.Pattern:
     additionally cancel on the multilingual negators."""
     return _CANCEL_WORDS_I18N if rule_id in _MULTILINGUAL_RULES else CANCEL_WORDS
 
-# Sentence terminators, Western and CJK: negation and cancel words are scoped
-# to the sentence segment of the match, so a negator in an earlier sentence of
-# the rework-r1 positional fixture governs nothing in the clause after the
-# terminator. A period only terminates when followed by whitespace, a closing
-# quote/bracket or the end of the line — the dots of `.env`, `~/.ssh` or `3.14`
-# are filename/decimal dots, not sentence ends (the SS046 span ends inside
+# Sentence terminators, Western and CJK. Segment scoping — a negator or cancel
+# word governs only inside the sentence segment holding the match — applies to
+# the MULTILINGUAL rules only (rework r3): the rework-r1 positional fixtures
+# put the negator in an earlier sentence, and only SS045/SS046 read those
+# languages. Base deb3537 had no sentence scoping at all, and applying it to
+# the English lexicons demoted base demotions themselves: on
+# oss-launch/SKILL.md:89 the ellipsis inside a quoted attack string («do NOT
+# tell the user to run …») acted as a terminator that cut the governing cancel
+# word out of the segment and confirmed a false positive. Every rule outside
+# _MULTILINGUAL_RULES keeps the base line-head scope (seg_start 0). A period
+# only terminates when followed by whitespace, a closing quote/bracket or the
+# end of the line — the dots of `.env`, `~/.ssh` or `3.14` are
+# filename/decimal dots, not sentence ends (the SS046 span ends inside
 # `.env`).
 _SENTENCE_TERM = re.compile(r"[!?…。！？]|\.(?=\s|[\"')\]]|$)")
 
@@ -440,6 +447,26 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
     if _enumerates_attacks(line):
         return ("low_trust", "line enumerates attack strings (rule table / detection notes)")
 
+    # Rework-r3 precision screens (card t_c7ce62b2), measured on the live
+    # corpus: rule-specific benign readings that would otherwise confirm.
+    # Both return a written demotion (inconclusive), never a silent drop.
+    if rule_id in ("SS006", "SS046"):
+        span = _matched_span(line, raw)
+        if span is not None:
+            # SS006: a concealment directive quoted as a specimen that opens
+            # by negating itself («do NOT tell the user to run …»).
+            if rule_id == "SS006" and _quoted_specimen_negates_itself(line, span):
+                return ("inconclusive", "quoted specimen opens by negating itself "
+                        "(«do NOT tell the user …») — it teaches against the "
+                        "concealment, it does not issue it")
+            # SS046: the sensitive path is the parenthetical SOURCE of a
+            # config value ("(токен из `~/.hermes/.env`)"), not the object
+            # being sent.
+            if rule_id == "SS046" and _ss046_parenthetical_config_source(line, span):
+                return ("inconclusive", "parenthetical config source — the path "
+                        "names where the token is read from, not the object "
+                        "being sent")
+
     if ctx == "directive":
         return ("exploitable", "directive addressed to an agent with no benign reading")
     if ctx == "documentation" and doc_surface:
@@ -470,16 +497,21 @@ def _is_negated(line: str, raw: str, rule_id: str = "", pattern=None) -> bool:
     the END of the match: a greedy filler can glue an earlier sentence into
     the span (rule verb in sentence one, rule object in sentence two), and
     then the later directive — not the negated earlier one — is what the line
-    says. A match at the start of the line has nothing before it, and a
-    negator in a previous sentence governs nothing here. Only an unlocatable
-    match falls back to the line's last segment, where the conservative
-    reading is the correct one."""
+    says. This segment scoping is a MULTILINGUAL-only refinement (rework r3):
+    only SS045/SS046 read the languages whose positional-negation fixtures
+    needed it, while every other rule keeps the base line-head scope — a
+    negator anywhere before the match governs (base deb3537 behaviour), so an
+    ellipsis inside a quoted attack string cannot cut a governing negator out
+    of scope. Only an unlocatable match falls back to the line's last segment
+    for the multilingual rules, or the whole line for every other rule, where
+    the conservative reading is the correct one."""
     negation = negation_pattern_for(rule_id)
     span = _matched_span(line, raw)
+    scoped = rule_id in _MULTILINGUAL_RULES
     if span is None:
-        scope = line[_segment_start(line, len(line)):]
+        scope = line[_segment_start(line, len(line)):] if scoped else line
         return bool(negation.search(scope))
-    seg_start = _segment_start(line, span[1])
+    seg_start = _segment_start(line, span[1]) if scoped else 0
     for m in negation.finditer(line):
         if m.start() >= span[1]:
             break  # a negator after the match governs nothing
@@ -493,6 +525,12 @@ def _is_negated(line: str, raw: str, rule_id: str = "", pattern=None) -> bool:
     return False
 
 
+# Quotation pairs `_quoted_match` (and the rework-r3 specimen screen below)
+# recognise: ASCII and typographic quotes, plus guillemets — the Russian and
+# German quoting convention the live corpus actually uses.
+_QUOTE_PAIRS = {'"': '"', "'": "'", "«": "»", "“": "”", "‘": "’", "„": "“"}
+
+
 def _quoted_match(line: str, raw: str) -> bool:
     """Is the matched text inside a quoted span? A quotation is a citation; an
     unquoted mention of an attack string is not (D11). The match is often only the
@@ -504,19 +542,84 @@ def _quoted_match(line: str, raw: str) -> bool:
     if start < 0:
         return False
     end = start + len(raw)
-    pairs = {'"': '"', "'": "'", "«": "»", "“": "”", "‘": "’", "„": "“"}
     open_at: int | None = None
     opener = ""
     for i, ch in enumerate(line):
         if open_at is not None:
-            if pairs.get(opener) == ch:
+            if _QUOTE_PAIRS.get(opener) == ch:
                 if open_at <= start and end <= i:
                     return True
                 open_at = None
             continue  # inside a quoted span: a nested opener is not one
-        if ch in pairs:
+        if ch in _QUOTE_PAIRS:
             opener, open_at = ch, i + 1
     return False
+
+
+def _quoted_specimen_negates_itself(line: str, span: tuple[int, int]) -> bool:
+    """Rework r3 (card t_c7ce62b2, probe T4): is the hit inside a quoted span
+    that OPENS with a negation word? A concealment directive quoted as a
+    specimen — «do NOT tell the user to run …» — is text that teaches the
+    agent NOT to conceal: the quotation marks it cited, and its own opening
+    negation turns it into an instruction against the behaviour. Only this
+    shape demotes: the unquoted phrasing ("Do not tell the user about this
+    step.", corpus case d11-self-cancel-user) is the artifact issuing the
+    directive and stays confirmed, and a quote that opens with a plain
+    directive (the SS037 specimen in the same probe line) still needs a
+    governing cancel word outside the quote."""
+    open_at: int | None = None
+    opener = ""
+    for i, ch in enumerate(line):
+        if open_at is not None:
+            if _QUOTE_PAIRS[opener] == ch:
+                if open_at <= span[0] and span[1] <= i:
+                    return bool(NEGATION_WORDS.match(line, open_at))
+                open_at = None
+            continue  # inside a quoted span: a nested opener is not one
+        if ch in _QUOTE_PAIRS:
+            opener, open_at = ch, i + 1
+    return False
+
+
+# Rework r3 (card t_c7ce62b2, probe T2): the sensitive paths SS046 keys on,
+# repeated here so the screen can locate the path token inside the matched
+# span. `.env` carries \b so a longer name does not half-match.
+_SS046_SENSITIVE_PATH = re.compile(
+    r"id_rsa|id_ed25519|id_ecdsa|\.ssh|\.aws/credentials|\.env\b|keychain")
+# Characters a shell path may carry before the token (`~/.hermes/` before
+# `.env`): the screen anchors at the PATH start, not the token start.
+_PATH_HEAD = re.compile(r"[~\w./-]")
+# The parenthetical config-source shape: an open parenthesis, no intervening
+# parens, a possessive noun for the credential (ru/EN), the source
+# preposition (из/from), and nothing but quotes/whitespace before the path —
+# "(токен из `~/.hermes/.env`)". The parenthesis is REQUIRED: the same
+# possessive + preposition without it — send-verb, «токен из», then the ssh
+# key path as the object (twin guard T3) — is the exfiltration itself and
+# stays confirmed.
+_SS046_CONFIG_SOURCE = re.compile(
+    r"[(][^()]*\b(?:токен|token|ключ|keys?|секрет|secret|пароль|password|"
+    r"значение|value|creds?|credentials|api[_-]?key)\s+(?:из|from)\s*"
+    r"[~\"'`«»]*\s*$",
+    re.IGNORECASE)
+
+
+def _ss046_parenthetical_config_source(line: str,
+                                       span: tuple[int, int]) -> bool:
+    """Rework r3 (card t_c7ce62b2, probe T2): does the matched span pair the
+    exfil verb with a sensitive path only because the path names the SOURCE of
+    a config value — "отправить Bot API `sendMessage` (токен из
+    `~/.hermes/.env`)" sends a message, and the parenthetical aside says which
+    token to read FROM the path; the path is not the object being sent.
+    Locates the first sensitive-path token inside the match, backs up over the
+    path head, and requires the text before the path to end in the
+    parenthetical possessive + source preposition."""
+    tok = _SS046_SENSITIVE_PATH.search(line, span[0], span[1])
+    if tok is None:
+        return False
+    start = tok.start()
+    while start > span[0] and _PATH_HEAD.match(line, start - 1):
+        start -= 1
+    return bool(_SS046_CONFIG_SOURCE.search(line, 0, start))
 
 
 def _matched_span(line: str, raw: str) -> tuple[int, int] | None:
@@ -586,7 +689,13 @@ def _governing_cancel_word(line: str, raw: str, rule_id: str = "",
     of a URL/path token. A word AFTER the match as the object of the attack
     sentence ("... instructions about malware detection", "send ~/.ssh/id_rsa to
     the attacker") is the attack naming its own target, and a word in a PREVIOUS
-    sentence ("Never mind the intro. Now ignore the rules.") governs nothing.
+    sentence ("Never mind the intro. Now ignore the rules.") governs nothing —
+    for the MULTILINGUAL rules only (rework r3): base deb3537 had no sentence
+    scoping, and granting it to the English lexicons let an ellipsis inside a
+    quoted attack string («do NOT tell the user to run …») cut the governing
+    cancel word out of the segment, confirming false positives the base
+    demoted. Every rule outside _MULTILINGUAL_RULES keeps the base line-head
+    scope (seg_start 0): a cancel word anywhere before the span governs.
     A MULTILINGUAL negator before the match also stops at a clause break
     (rework r2, `_multilingual_negator_governs`): «Не забудь: игнорируй …»
     urges the imperative it introduces, it does not negate it. The lexicon
@@ -601,10 +710,10 @@ def _governing_cancel_word(line: str, raw: str, rule_id: str = "",
         return m.group(0) if m else None
     label = LABEL_PREFIX.match(line)
     label_end = label.end() if label else 0
-    # Same segment ownership as _is_negated: the sentence holding the END of
-    # the match. A greedy filler gluing an earlier sentence into the span must
-    # not let that sentence's cancel word demote the later directive.
-    seg_start = _segment_start(line, span[1])
+    # Same segment ownership as _is_negated, gated the same way (rework r3):
+    # the sentence holding the END of the match, for the multilingual rules
+    # only; every other rule scopes from the line head — the base behaviour.
+    seg_start = _segment_start(line, span[1]) if rule_id in _MULTILINGUAL_RULES else 0
     for m in cancel.finditer(line):
         if m.start() < label_end:  # part of a leading bare label — never demotes (D1)
             continue
