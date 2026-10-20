@@ -563,7 +563,8 @@
    "description": "Same instruction-override family as SS001/SS002 in the languages English-only phrase lists miss: an imperative override verb (Russian игнорируй/забудь, Chinese 忽略/无视, German ignoriere, Spanish ignora) within one line of the words for instructions/rules, or a Russian concealment directive (не говори/сообщай/упоминай … пользовател). Severity semantics are the family's: critical when the verifier confirms it on an instruction surface; mentions in prose grade inconclusive as usual.",
    "kind": "intent",
    "context": "any",
-   "requires_pattern": null
+   "requires_pattern": null,
+   "_about": "Negation demotion is clause-scoped: a multilingual prefix negator (ru не/никогда не/нельзя, de nicht/niemals/nie, zh 不要/不得/别, es no/nunca, alongside the English set) demotes the hit with a written reason only when no clause break (comma, semicolon, colon, dash — Western or CJK) sits between it and the directive, and never across a sentence boundary; a discourse-softening prefix («Не забудь: …») that urges the restated imperative after the break leaves the hit confirmed. The multilingual negators apply to the multilingual rules (SS045/SS046) only — every other rule cancels on the English lexicons alone."
   },
   {
    "id": "SS046",
@@ -575,9 +576,10 @@
    "description": "Same exfiltration family as SS003/SS005, language-agnostic on the verb: an imperative send/upload/copy verb in Russian, Chinese, German or Spanish within 60 characters on the same line of a sensitive path (~/.ssh, id_rsa/id_ed25519, .aws/credentials, .env, keychain) — either order, because German and Spanish place the verb after the path. Verb or path alone is not a finding; the pair on one line is the signal.",
    "kind": "intent",
    "context": "any",
-   "requires_pattern": null
+   "requires_pattern": null,
+   "_about": "Negation demotion is clause-scoped, with the same semantics as SS045: a multilingual prefix negator governs the verb pair only up to the first clause break (comma, semicolon, colon, dash — Western or CJK) and never past a sentence terminator, so a softening prefix that urges the restated directive does not demote it. The multilingual negator lexicon applies to the multilingual rules (SS045/SS046) only; every other rule cancels on the English lexicons alone."
   }
  ],
- "_about": "severity = worst case if the rule fires on a hostile artifact (for humans to triage). kind = intent (exploitation: a directive with no benign reading) | capability (dual-use). context = directive (agent instruction files) | code | any. requires_pattern = file-level correlation: the file must also match this, else the hit is not a finding. Cancellation — docs/placeholder frames and MULTILINGUAL positional negation (ru/de/zh/es/en prefix negators, sentence-scoped) — is generic and lives in verifier.py so the catalog stays declarative. `patterns` are candidates, not findings.",
+ "_about": "severity = worst case if the rule fires on a hostile artifact (for humans to triage). kind = intent (exploitation: a directive with no benign reading) | capability (dual-use). context = directive (agent instruction files) | code | any. requires_pattern = file-level correlation: the file must also match this, else the hit is not a finding. Cancellation — docs/placeholder frames and multilingual positional negation (ru/de/zh/es prefix negators, clause-scoped and applied to the multilingual rules SS045/SS046 only; the English negators stay sentence-scoped for every rule) — is generic and lives in verifier.py so the catalog stays declarative. `patterns` are candidates, not findings.",
  "_version": "0.3.4"
 }

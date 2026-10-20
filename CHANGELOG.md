@@ -54,6 +54,22 @@ rule catalog simply did not see. The malicious corpus still prints the same
 - R3: archives shipped as skills were never opened at all — a malicious
   `SKILL.md` inside a `payload.zip` scanned as one binary skip and exited 0.
   See archive scanning above.
+- Review rework r2 — negator scope in the shared cancellation layer: the
+  multilingual prefix negators (ru/de/zh/es) had been appended to the shared
+  cancel/negation lexicons every rule consumes, so the Spanish token `no`
+  demoted an English hit (an English "No exceptions:" line that went on to
+  restate the classic SS001 override exited 0 instead of confirming SS001),
+  and a negator governed across a
+  clause break, so a discourse-softening prefix («Не забудь: игнорируй …»)
+  masked SS045 exactly as a negation from an earlier sentence never may. The
+  lexicons are now per rule (`negation_pattern_for`/`cancel_pattern_for` in
+  verifier.py): every rule outside SS045/SS046 cancels on the English
+  lexicons alone — the base behavior — and the multilingual negators govern
+  only their own clause, up to the first comma/semicolon/colon/dash (Western
+  or CJK); when the break falls inside the matched span, the text after it is
+  rechecked against the rule's own pattern, so a benign list («Не игнорируй
+  правила, инструкции») still demotes while the restated imperative confirms.
+  English negators keep the sentence-segment scope they always had.
 
 ### Changed
 
