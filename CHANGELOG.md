@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3]
+
+Audit fixes for v0.3.2 (defects V1–V8; acceptance tests in
+`tests/test_v033_audit.py`). No detection-rule changes — the malicious corpus
+still prints the same 43 confirmed findings.
+
+### Fixed
+
+- V1: `watch init` on a nonexistent path used to write a 0-entry snapshot and
+  exit 0 ("0 files") — every later diff then watched the wrong tree and read
+  it as clean. It is now an input error (one stderr line, exit 2, no snapshot
+  file), and a tree with zero files is refused too: an empty snapshot is
+  indistinguishable from having watched the wrong path.
+- V2: `watch diff` silently diffed whatever tree it was given against any
+  snapshot. The snapshot pins the absolute root it was taken under, and a root
+  mismatch is now an explicit input error naming both paths (exit 2, "re-run
+  watch init") instead of a bogus clean/drift verdict for another tree.
+- V3: the SARIF report declared a dead `$schema` URL (a raw.githubusercontent.com
+  oasis-tcs path that 404s, and was an Android-workflow schema, not SARIF);
+  it now declares the canonical `https://json.schemastore.org/sarif-2.1.0.json`.
+- V4: README demo output was stale (42 confirmed findings vs the real 43, and
+  an outdated summary line); the block and `docs/assets/demo.png` are
+  regenerated from the verbatim output of this commit.
+- V5: one unreadable file (chmod 000) aborted the whole scan and discarded the
+  findings already collected from the readable files. The walk now records
+  unreadable files (`unreadable_files` in `--json`) and keeps scanning; the CLI
+  prints the findings, warns about the skipped file(s) on stderr and exits 2.
+  A tree where nothing could be read is still an input error.
+- V6: `scan <script> --detonate` on a single file silently printed
+  "(0 scripts)" because only directories were rglobbed; single-file detonation
+  now actually runs the script (detonate_tree/find_scripts accept a file
+  target).
+- V7: detonation only picked up `.sh`/`.bash`/`.py`/`install` — a `.js` miner
+  or an SS044 PowerShell cradle was never run. `find_scripts` now covers
+  `.js`, `.rb`, `.pl` and `.ps1` too, each under its own interpreter
+  (node/ruby/perl/pwsh); other files (e.g. `.txt`, `.mjs`) stay excluded by
+  suffix.
+- V8: binary/non-text files were silently counted as "files scanned". They
+  are now reported separately — a cheap control-byte sniff on the first chunk
+  classifies them, `files_scanned` counts text only, the summary line shows
+  the split (`N text, M binary skipped`), and `--json` exposes
+  `binary_files_skipped`. A bytecode blob with an embedded ASCII payload
+  (sparse controls) stays scannable, so detection counts did not move.
+
+### Changed
+
+- Version pins in README (GitHub Action `uses:`, pre-commit `rev:`, git install
+  refs, rules badge) follow the release: `v0.3.3`.
+
 ## [0.3.2] - 2026-10-14
 
 Documentation is an instruction surface — the last silent demotion found by hand

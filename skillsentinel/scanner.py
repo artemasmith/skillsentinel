@@ -24,6 +24,7 @@ from .verifier import (VERDICT_ORDER, VERIFIERS_BY_NAME, bind_rules,
 
 MAX_FILE_BYTES = 2_000_000  # larger files are scanned as head+tail windows
 SCAN_WINDOW_BYTES = 512 * 1024  # window size on each side of an oversize file
+BINARY_PROBE_BYTES = 4096  # the binary sniff reads only this much of a file
 
 # Directory subtrees the walker never enters. `.git` is special-cased below:
 # all of it is repo metadata except `.git/hooks/` — hook scripts are executable
@@ -93,6 +94,15 @@ class InputError(Exception):
     """
 
 
+class UnreadableFileError(InputError):
+    """One file could not be read (mode 000, vanished mid-scan).
+
+    Unlike a plain InputError the walk does not abort: `scan_path` records the
+    path on the result and keeps scanning, so the readable files' findings
+    survive; the CLI warns about the recorded files and still exits 2.
+    """
+
+
 @dataclass
 class Finding:
     rule_id: str
@@ -131,6 +141,8 @@ class ScanResult:
     truncated_files: list[str] = field(default_factory=list)
     limit_reached: tuple[int, int] | None = None
     undecodable_files: list[str] = field(default_factory=list)
+    unreadable_files: list[str] = field(default_factory=list)
+    binary_files_skipped: int = 0
 
     @property
     def counts(self) -> dict[str, int]:
@@ -166,6 +178,8 @@ class ScanResult:
             "truncated_files": self.truncated_files,
             "limit_reached": list(self.limit_reached) if self.limit_reached else None,
             "undecodable_files": self.undecodable_files,
+            "unreadable_files": self.unreadable_files,
+            "binary_files_skipped": self.binary_files_skipped,
         }
 
 
@@ -320,6 +334,43 @@ _BOMS = ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"),
          (b"\xef\xbb\xbf", "utf-8-sig"),
          (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16"))
 
+# C0 control bytes (tab/CR/LF excepted) plus DEL: a dense cluster of these in
+# the first chunk is the fingerprint of binary content. Counted via translate
+# so the sniff stays C-speed — it runs on every file of every walk.
+_CONTROL_BYTES = bytes(b for b in range(0x20) if b not in (0x09, 0x0A, 0x0D)) + b"\x7f"
+
+
+def _read_head(path: Path) -> bytes:
+    """The first BINARY_PROBE_BYTES of a file — all the binary sniff ever reads."""
+    with path.open("rb") as fh:
+        return fh.read(BINARY_PROBE_BYTES)
+
+
+def _looks_binary(head: bytes) -> bool:
+    """Cheap, deterministic binary sniff on a file's first chunk.
+
+    Control-byte density at/above the same 1/4 threshold the decode ladder
+    uses for its UTF-16 heuristic, with the ladder's own text escapes kept: a
+    BOM, or a BOM-less control-dense chunk that still decodes as
+    mostly-printable UTF-16, is text. Sparse controls keep a file scannable —
+    a bytecode blob with an embedded ASCII payload stays in the scan
+    (latin-1 keeps its attack strings visible), only control soup is skipped.
+    """
+    if not head or any(head.startswith(bom) for bom, _ in _BOMS):
+        return False
+    controls = len(head) - len(head.translate(None, _CONTROL_BYTES))
+    if controls * 4 < len(head):
+        return False
+    for enc in ("utf-16-le", "utf-16-be"):
+        try:
+            text = head.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\r\t")
+        if printable >= len(text) * 0.8:
+            return False
+    return True
+
 
 def _decode_scannable(raw: bytes) -> tuple[str, bool]:
     """Decode file bytes into scannable text. Returns (text, decodable).
@@ -420,8 +471,10 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
     try:
         text, truncated, decodable = _read_scannable(path)
     except OSError as e:
-        # unreadable (mode 000), vanished mid-scan: an input problem, not a bug
-        raise InputError(f"cannot read {path}: {e.strerror or e}") from None
+        # unreadable (mode 000), vanished mid-scan: an input problem, not a bug.
+        # Raised as UnreadableFileError so `scan_path` can record the file and
+        # keep walking instead of discarding the readable files' findings (V5).
+        raise UnreadableFileError(f"cannot read {path}: {e.strerror or e}") from None
     candidates: list[Finding] = []
     final: list[Finding] = []
     suppressed = 0
@@ -627,9 +680,22 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
             continue
         if deadline is not None and time.monotonic() > deadline:
             raise InputError(f"timed out after {timeout:g} s")
-        found, suppressed, text, truncated, file_final, decodable = scan_file(
-            p, rules, root, honor_ignores=honor_ignores,
-            deadline=deadline, timeout=timeout)
+        try:
+            if _looks_binary(_read_head(p)):
+                # V8: a NUL-dense non-text file is reported separately instead
+                # of silently counting as a scanned file
+                result.binary_files_skipped += 1
+                continue
+            found, suppressed, text, truncated, file_final, decodable = scan_file(
+                p, rules, root, honor_ignores=honor_ignores,
+                deadline=deadline, timeout=timeout)
+        except (UnreadableFileError, OSError):
+            # V5: one unreadable file must not discard the findings already
+            # collected from the readable rest — record it, keep walking; the
+            # CLI warns and exits 2. (Timeouts raise plain InputError and
+            # still propagate.)
+            result.unreadable_files.append(rel)
+            continue
         result.files_scanned += 1
         scanned_rels.append(rel)
         result.suppressed += suppressed
@@ -660,11 +726,12 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
             f".skillsentinelignore excludes skill manifest {ignored_manifest!r} — "
             "refusing to scan a skill without its manifest")
     if result.files_scanned == 0 and not result.limit_reached:
-        # Every file was excluded/ignored/skipped: the walk saw nothing, so a
-        # clean verdict here would prove nothing (same refusal as a whole-skill
-        # .skillsentinelignore). limit_reached keeps its own exit-2 report.
+        # Every file was excluded/ignored/skipped/unreadable/binary: the walk
+        # saw nothing scannable, so a clean verdict here would prove nothing
+        # (same refusal as a whole-skill .skillsentinelignore). limit_reached
+        # keeps its own exit-2 report.
         raise InputError(
-            f"scanned 0 files in {root} (all excluded or skipped) — "
+            f"scanned 0 files in {root} (all excluded, unreadable or skipped) — "
             "refusing to report an empty scan as clean")
     if (deadline is not None and time.monotonic() > deadline) or (
             len(result.undecodable_files) == result.files_scanned):
@@ -734,7 +801,9 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
 def to_sarif(result: ScanResult, rules: list[Rule] | None = None) -> dict:
     rules = rules or load_rules()
     return {
-        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/json/gitHubAndroidWorkflow-2.1.0-rtm.5.json",
+        # canonical SARIF 2.1.0 schema (the oasis-tcs GitHub URL this used to
+        # carry was a dead Android-workflow schema, 404 since 2019)
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
         "runs": [{
             "tool": {"driver": {
