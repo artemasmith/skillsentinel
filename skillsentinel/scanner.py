@@ -339,6 +339,12 @@ _BOMS = ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"),
 # so the sniff stays C-speed — it runs on every file of every walk.
 _CONTROL_BYTES = bytes(b for b in range(0x20) if b not in (0x09, 0x0A, 0x0D)) + b"\x7f"
 
+# V8: the controls plus every byte >= 0x80. Real-world binaries — PNG, gzip —
+# keep their entropy in non-control bytes, so their fingerprint is density in
+# this wider set combined with a failed strict UTF-8 decode. Same translate
+# trick, same C-speed.
+_NONPRINT_BYTES = _CONTROL_BYTES + bytes(range(0x80, 0x100))
+
 
 def _read_head(path: Path) -> bytes:
     """The first BINARY_PROBE_BYTES of a file — all the binary sniff ever reads."""
@@ -346,30 +352,58 @@ def _read_head(path: Path) -> bytes:
         return fh.read(BINARY_PROBE_BYTES)
 
 
-def _looks_binary(head: bytes) -> bool:
-    """Cheap, deterministic binary sniff on a file's first chunk.
+def _utf16_mostly_printable(head: bytes, bar: float) -> bool:
+    """True if the chunk decodes as BOM-less UTF-16 at >= bar printable.
 
-    Control-byte density at/above the same 1/4 threshold the decode ladder
-    uses for its UTF-16 heuristic, with the ladder's own text escapes kept: a
-    BOM, or a BOM-less control-dense chunk that still decodes as
-    mostly-printable UTF-16, is text. Sparse controls keep a file scannable —
-    a bytecode blob with an embedded ASCII payload stays in the scan
-    (latin-1 keeps its attack strings visible), only control soup is skipped.
+    The text escape both density branches of _looks_binary share: a chunk
+    that reads as (mostly) printable UTF-16 in either endianness is a text
+    file, not binary soup.
     """
-    if not head or any(head.startswith(bom) for bom, _ in _BOMS):
-        return False
-    controls = len(head) - len(head.translate(None, _CONTROL_BYTES))
-    if controls * 4 < len(head):
-        return False
     for enc in ("utf-16-le", "utf-16-be"):
         try:
             text = head.decode(enc)
         except UnicodeDecodeError:
             continue
         printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\r\t")
-        if printable >= len(text) * 0.8:
-            return False
-    return True
+        if printable >= len(text) * bar:
+            return True
+    return False
+
+
+def _looks_binary(head: bytes) -> bool:
+    """Cheap, deterministic binary sniff on a file's first chunk.
+
+    Two densities, one 1/4 threshold. Control density (C0 minus tab/CR/LF
+    plus DEL) at/above the threshold is the classic binary fingerprint,
+    with the decode ladder's text escapes kept: a BOM, or a BOM-less
+    control-dense chunk that still decodes as mostly-printable (>= 0.8)
+    UTF-16, is text. Non-print density (controls + bytes >= 0x80) at the
+    same threshold catches real-world binaries — PNG, gzip — whose entropy
+    lives in non-control bytes, but only when the chunk also fails a strict
+    UTF-8 decode: valid UTF-8 stays text however high its bytes run (unicode
+    smuggling must keep getting scanned), and the UTF-16 escape still holds
+    at a stricter >= 0.95 printable bar — random bytes luck into ~0.85-0.9
+    printable UTF-16 (a gzip head sits at ~0.88), real UTF-16 text is
+    essentially all printable. Below both densities a file stays scannable —
+    a bytecode blob with an embedded ASCII payload stays in the scan
+    (latin-1 keeps its attack strings visible); only control or
+    undecodable non-print soup is skipped.
+    """
+    if not head or any(head.startswith(bom) for bom, _ in _BOMS):
+        return False
+    controls = len(head) - len(head.translate(None, _CONTROL_BYTES))
+    if controls * 4 >= len(head):
+        return not _utf16_mostly_printable(head, 0.8)
+    # V8 (review r1): control-sparse is not proof of text. Entropy hiding in
+    # high bytes plus a failed strict UTF-8 decode is binary; the stricter
+    # 0.95 bar on the UTF-16 escape keeps BOM-less UTF-16 text scannable.
+    nonprint = len(head) - len(head.translate(None, _NONPRINT_BYTES))
+    if nonprint * 4 >= len(head):
+        try:
+            head.decode("utf-8")
+        except UnicodeDecodeError:
+            return not _utf16_mostly_printable(head, 0.95)
+    return False
 
 
 def _decode_scannable(raw: bytes) -> tuple[str, bool]:

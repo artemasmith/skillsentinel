@@ -43,11 +43,14 @@ still prints the same 43 confirmed findings.
   (node/ruby/perl/pwsh); other files (e.g. `.txt`, `.mjs`) stay excluded by
   suffix.
 - V8: binary/non-text files were silently counted as "files scanned". They
-  are now reported separately — a cheap control-byte sniff on the first chunk
-  classifies them, `files_scanned` counts text only, the summary line shows
-  the split (`N text, M binary skipped`), and `--json` exposes
-  `binary_files_skipped`. A bytecode blob with an embedded ASCII payload
-  (sparse controls) stays scannable, so detection counts did not move.
+  are now reported separately — a cheap two-density sniff on the first chunk
+  classifies them: control bytes at ≥1/4, or non-printable bytes (controls +
+  high bytes) at ≥1/4 in a chunk that fails strict UTF-8 decode (valid UTF-8
+  stays scannable however high its bytes run). `files_scanned` counts text
+  only, the summary line shows the split (`N text, M binary skipped`), and
+  `--json` exposes `binary_files_skipped`. A bytecode blob with an embedded
+  ASCII payload (sparse controls) stays scannable, so detection counts did
+  not move.
 
 ### Changed
 

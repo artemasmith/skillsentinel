@@ -278,7 +278,7 @@ Pure Python stdlib (`re`, `json`, `hashlib`, `argparse`, `subprocess`, `pathlib`
 ## Testing & contributing
 
 ```bash
-python3 -m unittest discover -s tests -v   # 219 tests as of v0.3.3 (the runner prints the count)
+python3 -m unittest discover -s tests -v   # 223 tests as of v0.3.3 (the runner prints the count)
 ```
 
 Fixtures: 10 malicious skills (real attack patterns, inert payloads), 6 clean skills, and a **`benign-hard` corpus of the false positives this scanner actually produced** while being built — a fenced install command, a legit SSH backup, a detection-signature table, a systemd deploy, a script reading the user's own saved password. All three sets are asserted: every malicious directory flagged, zero findings on both benign sets, every demotion carrying a reason.
