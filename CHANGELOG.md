@@ -38,12 +38,16 @@ rule catalog simply did not see. The malicious corpus still prints the same
 
 ### Fixed
 
-- R1: symlinked skill directories were invisible to the walk — a reproduced
-  `skills-live` tree of 37 entries (35 directory symlinks) scanned 6 files
-  instead of the 72 reachable ones. The walk now descends directory symlinks
-  by default (that is how skill trees are installed); loops and repeat
-  targets terminate on a visited `(st_dev, st_ino)` set instead of hanging,
-  each refusal reported as a warned skip.
+- R1: symlinked skill directories were invisible to the walk. On the
+  reproduction tree built by `tests/test_v034_audit.py` (R1SymlinkDescentTests:
+  35 symlinked skills x 2 files + the real skill + README = 72 reachable
+  files) v0.3.3 scanned 2 files; the same tree now scans 72. On the real
+  `~/harness/skills-live` tree the reachable count is
+  `find -L ~/harness/skills-live -type f | wc -l` = 55, and v0.3.3 scanned 6
+  of them; this version scans all 55. The walk now descends directory
+  symlinks by default (that is how skill trees are installed); loops and
+  repeat targets terminate on a visited `(st_dev, st_ino)` set instead of
+  hanging, each refusal reported as a warned skip.
 - R1b: content reachable only through an out-of-root symlink was either
   skipped or attributed to a path inside the root. Files reached via such
   links are now reported as `link -> target`, so a finding names both where
