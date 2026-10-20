@@ -380,7 +380,8 @@ class Verdict:
 
 def _reason_for(rule, ctx: str, line: str, raw: str,
                 cfg: VerifierConfig, fence: bool = False,
-                escalates: bool = False) -> tuple[str, str]:
+                escalates: bool = False,
+                next_line: str = "") -> tuple[str, str]:
     """Return (verdict, human reason) for one candidate hit."""
     kind = getattr(rule, "kind", "intent")
     wants = getattr(rule, "context", "any")
@@ -458,12 +459,14 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
     # a concealment directive in quotation marks is a bypass, not a citation.)
     if rule_id == "SS046":
         span = _matched_span(line, raw)
-        if span is not None and _ss046_parenthetical_config_source(line, span):
+        if span is not None and _ss046_parenthetical_config_source(line, span, next_line):
             return ("inconclusive", "parenthetical config source — a true "
-                    "aside: the send verb's own object stands between the "
-                    "verb and the parenthesis and the line carries no "
-                    "network destination, so the path names where the "
-                    "token is read from, not the object being sent")
+                    "aside: the send verb's own object (beyond bare "
+                    "prepositions) stands between the verb and the "
+                    "parenthesis and neither this line nor the next "
+                    "carries a network destination, so the path names "
+                    "where the token is read from, not the object being "
+                    "sent")
 
     if ctx == "directive":
         return ("exploitable", "directive addressed to an agent with no benign reading")
@@ -574,10 +577,27 @@ _SS046_CONFIG_SOURCE = re.compile(
     r"значение|value|creds?|credentials|api[_-]?key)\s+(?:из|from)\s*"
     r"[~\"'`«»]*\s*$",
     re.IGNORECASE)
-# Rework r4 (card t_c7ce62b2): a network destination anywhere on the line —
-# a URL is where the credential rides to, so the path content is the payload,
-# never a config source.
-_SS046_URL = re.compile(r"https?://", re.IGNORECASE)
+# Rework r4 (card t_c7ce62b2), widened in r5: a network destination takes
+# more forms than an https?:// URL — any scheme, a bare dotted host,
+# IPv4[:port], a messenger @handle — and wherever it appears, the credential
+# read from the path rides to it, so the path content is the payload, never
+# a config source. Hostname labels are >=2 chars so 'e.g.'/'etc.' never
+# match; the handle is letter-first and never glued to a word char, so
+# 'pkg@1.2.3' does not match either.
+_SS046_DESTINATION = re.compile(
+    r"[A-Za-z][A-Za-z0-9+.-]*\://"               # any scheme://
+    r"|\b(?:[A-Za-z0-9][A-Za-z0-9-]{1,63}\.)+"   # dotted host, labels >=2
+    r"[A-Za-z]{2,24}\b"
+    r"|\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\b"  # IPv4[:port]
+    r"|(?<![\w@])@[A-Za-z][\w-]{2,}",             # letter-first @handle
+    re.IGNORECASE)
+# Rework r5: a bare ru/en preposition is not a send object — «Перешли на
+# <host> (токен из <ssh-путь>)» sends the token; the preposition only points
+# at the destination. Stripped with \b boundaries before the object gate
+# asks for a remaining word character.
+_SS046_BARE_PREPOSITION = re.compile(
+    r"\b(?:на|в|во|к|ко|с|со|по|за|до|от|to|on|into|via|by|up|for|at)\b",
+    re.IGNORECASE)
 # The exfil verbs of the SS046 pattern itself (rules.json): the screen asks
 # whether the LAST verb before the parenthesis carries its own object, so it
 # must recognise the same verb family the rule matched on.
@@ -588,25 +608,29 @@ _SS046_EXFIL_VERB = re.compile(
     r"\breenvia\b|\bsube\b", re.IGNORECASE)
 
 
-def _ss046_parenthetical_config_source(line: str,
-                                       span: tuple[int, int]) -> bool:
-    """Rework r3 (card t_c7ce62b2, probe T2), rescoped in r4: does the matched
-    span pair the exfil verb with a sensitive path only because the path names
-    the SOURCE of a config value — "отправить Bot API `sendMessage` (токен из
-    `~/.hermes/.env`)" sends a message, and the parenthetical aside says which
-    token to read FROM the path. Rework r4 gates the demotion to a TRUE aside
-    so real exfiltration stays confirmed; all three must hold:
+def _ss046_parenthetical_config_source(line: str, span: tuple[int, int],
+                                       next_line: str = "") -> bool:
+    """Rework r3 (card t_c7ce62b2, probe T2), rescoped in r4, widened in r5:
+    does the matched span pair the exfil verb with a sensitive path only
+    because the path names the SOURCE of a config value — "отправить Bot API
+    `sendMessage` (токен из `~/.hermes/.env`)" sends a message, and the
+    parenthetical aside says which token to read FROM the path. Rework r4
+    gates the demotion to a TRUE aside so real exfiltration stays confirmed;
+    all three must hold:
     (a) the parenthetical possessive + source preposition opens at the
         parenthesis the path sits in (the r3 shape, unchanged);
-    (b) a DISTINCT object — text with a word character (\\w, Unicode) and no
-        URL — stands between the LAST exfil verb before that parenthesis and
-        the parenthesis itself; no verb before the paren, or an empty
-        verb-to-paren stretch, means the aside IS the verb's object region
-        («Отправь (токен из <путь>) …» sends the token);
-    (c) no network destination (https?://) anywhere on the line — a URL
-        makes the credential from the path the payload riding to it («Отправь
-        на <url> (ключ из <ssh-путь>)»)."""
-    if _SS046_URL.search(line):
+    (b) a DISTINCT object — a word character (\\w, Unicode) beyond bare
+        ru/en prepositions — stands between the LAST exfil verb before that
+        parenthesis and the parenthesis itself; no verb before the paren,
+        an empty verb-to-paren stretch, or only prepositions there means
+        the aside IS the verb's object region («Отправь (токен из <путь>)
+        …» sends the token; «Перешли на <host> (токен из <путь>)» sends
+        the token to the host the preposition points at);
+    (c) no network destination of any form — scheme://, a bare dotted
+        host, IPv4[:port], a letter-first @handle — on the line OR the
+        line after it (r5: a URL wrapped to the next line still carries
+        the credential from the path to it)."""
+    if _SS046_DESTINATION.search(line + "\n" + next_line):
         return False
     tok = _SS046_SENSITIVE_PATH.search(line, span[0], span[1])
     if tok is None:
@@ -621,7 +645,7 @@ def _ss046_parenthetical_config_source(line: str,
     if not verbs:
         return False
     object_region = line[verbs[-1].end():aside.start()]
-    return bool(re.search(r"\w", object_region))
+    return bool(re.search(r"\w", _SS046_BARE_PREPOSITION.sub(" ", object_region)))
 
 
 def _matched_span(line: str, raw: str) -> tuple[int, int] | None:
@@ -792,7 +816,12 @@ def verify_findings(findings: list, sources: dict[str, str],
             if not escalates and rule.kind == "capability" \
                     and rule.category in ("credential-access", "exfiltration"):
                 escalates = bool(NET_EGRESS.search(text))
-        verdict, reason = _reason_for(rule, ctx, line, raw, cfg, fence, escalates)
+        # Rework r5: the SS046 screen also reads the line AFTER the finding —
+        # an exfil destination wrapped to the next line is still the
+        # destination of this directive.
+        next_line = lines[f.line] if f.line < len(lines) else ""
+        verdict, reason = _reason_for(rule, ctx, line, raw, cfg, fence,
+                                      escalates, next_line)
         if verdict == "exploitable" and f.rule_id == "SS040" and not cfg.disable_demotions:
             # Precision screen: exec/eval of a plain, untainted identifier is
             # ambiguous (CI wrappers, template compilers) — keep it visible as

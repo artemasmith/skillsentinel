@@ -93,11 +93,29 @@ rule catalog simply did not see. The malicious corpus still prints the same
   own phrase on oss-launch/SKILL.md:89, is demoted by the new specimen screen
   — a precision gain over base). The malicious corpus still prints the same
   43 confirmed findings, and the bypass corpus still catches 45/45.
+- Review rework r5 — SS046 destination test beyond `scheme://` (acceptance
+  tests in `tests/test_v034_rework5.py`). The parenthetical config-source
+  screen (r3, rescoped r4) accepted only an `https?://` URL as its network
+  destination, so real exfiltration aimed at a bare host (`evil.example.com`),
+  `IPv4:port`, `ftp://`, a messenger `@handle`, or a URL wrapped onto the next
+  physical line was demoted to inconclusive with a reason that falsely claimed
+  the line carried no destination; the object gate also counted a bare
+  preposition as the send verb's object («Перешли на <host> (токен из
+  <ssh-путь>)»). The destination test now matches any `scheme://` URI, a
+  dotted hostname (labels ≥2 chars, so `e.g.` never matches), `IPv4[:port]`
+  and a letter-first `@handle` (`pkg@1.2.3` never matches), searched on the
+  line and its immediately following line; a bare ru/en preposition alone is
+  no object. Live benign corpus unchanged; the malicious corpus still prints
+  43 confirmed findings, the bypass corpus still catches 45/45.
 
 ### Changed
 
 - Version pins in README (GitHub Action `uses:`, pre-commit `rev:`, git install
   refs, rules badge) follow the release: `v0.3.4`.
+- Disclosure from rework r4 (per review): the `CITATION_FRAME` lexicon on the
+  documentation surface gained the nouns `phrasings`, `attack strings` and
+  `teaches against` — quoted-match-only, so a quoted specimen framed by them
+  demotes as a citation while the same words unquoted stay caught.
 
 ## [0.3.3]
 
