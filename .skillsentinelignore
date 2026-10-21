@@ -14,10 +14,5 @@ tools/
 # SkillSentinel's own drift-watch snapshot is generated state (gitignored): it
 # embeds file contents, so a self-scan reads it as "rewrites own rules/hooks".
 .skillsentinel-snapshot.json
-# The scanner's own docs quote complete exfil one-liners on purpose: the
-# README's detonation transcript and docs/rules.md's catalog table both carry
-# real secret paths next to real send flags, so the fail-closed combo signal
-# (rules.py SECRET_SRC x EGRESS) fires on them by design. Same rationale as
-# tests/ above — this is the corpus the scanner is written against.
+# README quotes the fixtures' real exfil one-liners as a detonation transcript of recorded detector output — unsanitizable without falsifying documented behavior.
 README.md
-docs/
