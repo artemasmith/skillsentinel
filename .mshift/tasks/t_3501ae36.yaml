@@ -31,7 +31,7 @@ rework_report:
 verify_report:
   verdict: REQUEST_CHANGES
   checked_at: 2026-10-21T16:30
-  reviewer_sha: "TBD-after-commit"
+  reviewer_sha: "3daef2ac2cfbfabdb6750dd12eac146d65fd43b9"
   claims:
     - {claim: "C1 closed: read-key+POST payload in a fence of a directive .md is a confirmed finding with rc!=0", evidence: "tests/test_review_t3501ae36_round2.py::C1ComboFailsClosedInEveryDocContext — 6/6 contexts (fence, span, blockquote, table row, Usage section, JSONL line) rc=1, findings with non-empty combo reason; manual probes rc=1 each", ok: true}
     - {claim: "Negative control: demotable class without egress stays demoted, no FP wave", evidence: "round2 NEG test: cp ~/.ssh/id_rsa in fence -> rc=0, SS020 demoted, no combo reason", ok: true}
