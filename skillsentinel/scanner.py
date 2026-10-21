@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import errno
 import fnmatch
 import gzip
 import hashlib
@@ -11,10 +12,13 @@ import json
 import os
 import re
 import stat
+import tarfile
 import time
 import unicodedata
+import zlib
+import zipfile
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 from . import __version__
@@ -46,6 +50,16 @@ MANIFEST_NAMES = {"skill.md", "skill.yaml", "skill.json", "plugin.json"}
 # see `_verification_alias`.
 EXECUTABLE_BLOB_SUFFIXES = {".pyc", ".bin"}
 VERIFICATION_ALIAS_SUFFIX = ".skillsentinel-exec.sh"
+
+# R3 (v0.3.4): archives shipped as skills are opened and their text members
+# scanned in memory — nothing is ever extracted to disk, so zip-slip has
+# nowhere to write and a bomb is bounded by the read itself. Three guards
+# refuse the archive (with a warning) instead of trusting it.
+ARCHIVE_SUFFIXES_ZIP = (".zip", ".whl")
+ARCHIVE_SUFFIXES_TAR = (".tar.gz", ".tgz")
+DEFAULT_ARCHIVE_MAX_BYTES = 5_000_000  # uncompressed member budget (--archive-max-bytes)
+ARCHIVE_MAX_ENTRIES = 200              # member-count cap
+ARCHIVE_BOMB_RATIO = 100               # compressed:uncompressed ratio cap
 
 # Inline suppression markers. They are honored ONLY with `--honor-ignores`: a scanner
 # whose findings a scanned artifact can silence is itself the vulnerability (an
@@ -143,6 +157,10 @@ class ScanResult:
     undecodable_files: list[str] = field(default_factory=list)
     unreadable_files: list[str] = field(default_factory=list)
     binary_files_skipped: int = 0
+    # R1d/R3b: every refused entry (unfollowed/broken/looping symlink, guarded
+    # archive) lands here with its reason — a skip the output does not explain
+    # is indistinguishable from a clean scan.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -180,6 +198,7 @@ class ScanResult:
             "undecodable_files": self.undecodable_files,
             "unreadable_files": self.unreadable_files,
             "binary_files_skipped": self.binary_files_skipped,
+            "warnings": self.warnings,
         }
 
 
@@ -310,21 +329,146 @@ def _git_visible(parts: tuple[str, ...]) -> bool:
     return len(parts) > i + 1 and parts[i + 1] == HOOKS_DIR
 
 
-def _iter_target_files(root: Path) -> Iterable[Path]:
+@dataclass
+class _WalkEntry:
+    """One entry the walk produced: a file to scan, or a refused entry.
+
+    `path` is None for entries the link policy declines (broken link, loop,
+    `--no-follow-symlinks`); `reason` then carries the skip reason the result
+    must report instead of silently shrinking the scan (R1d). Files reached
+    through a symlink carry a `rel` of the form `link -> target` (R1b) so a
+    finding names both.
+    """
+    path: Path | None
+    rel: str
+    reason: str = ""
+
+
+def _dir_key(path: Path) -> tuple[int, int]:
+    st = path.stat()
+    return st.st_dev, st.st_ino
+
+
+def _within_root(target: Path, root: Path) -> bool:
+    """Is `target` inside the scanned `root`? (Both resolved.)"""
+    return target == root or root in target.parents
+
+
+def _dir_visible(parts: tuple[str, ...]) -> bool:
+    """May the walker descend into this directory? Prunes skip-listed
+    subtrees early (rglob walked them anyway; refusing at the branch is the
+    same result for less work) and prunes `.git` to its `hooks/` branch."""
+    for i, seg in enumerate(parts):
+        if seg in SKIP_DIR_PARTS:
+            return False
+        if seg == ".git":
+            rest = parts[i + 1:]
+            return rest == () or (len(rest) >= 1 and rest[0] == HOOKS_DIR)
+    return True
+
+
+def _iter_target_files(root: Path, follow_symlinks: bool = True
+                       ) -> Iterable[_WalkEntry]:
     """Yield every candidate entry under `root`, sorted for a stable order.
 
     Every file is a candidate regardless of suffix — a payload does not care
-    which extension hides it. Directories are filtered here; symlinks
-    (resolvable, broken or looped) are yielded so the caller can classify them.
+    which extension hides it. R1: symlinked directories are descended by
+    default (a skills tree of symlinks — 35 of 37 entries in the reproduced
+    install — is the normal layout, not an attack), and a visited set keyed
+    by (st_dev, st_ino) makes loops and repeat targets terminate as refused
+    entries instead of hangs. `--no-follow-symlinks` refuses every link with
+    a reason. Out-of-root targets are followed; their files are reported as
+    `link -> target` so the finding names both (R1b).
     """
     if root.is_file():
-        yield root
+        yield _WalkEntry(root, root.name)
         return
-    for p in sorted(root.rglob("*")):
-        parts = p.relative_to(root).parts
-        if not _git_visible(parts) or any(seg in SKIP_DIR_PARTS for seg in parts):
-            continue
-        yield p
+    try:
+        visited = {_dir_key(root)}  # a `link -> .` self-loop resolves here
+    except OSError:
+        visited = set()
+
+    def _walk(directory: Path, logical: str,
+              link_pair: tuple[str, str] | None) -> Iterable[_WalkEntry]:
+        try:
+            entries = sorted(os.scandir(directory), key=lambda e: e.name)
+        except OSError:
+            return  # unreadable directory: scan_path's zero-scan refusal reports it
+        for entry in entries:
+            rel = f"{logical}/{entry.name}" if logical else entry.name
+            parts = tuple(rel.split("/"))
+            if any(seg in SKIP_DIR_PARTS for seg in parts):
+                continue
+            path = directory / entry.name
+            if entry.is_symlink():
+                yield from _symlink_entry(path, rel, follow_symlinks, visited)
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                # `_git_visible` would reject `.git` itself and the walk would
+                # never reach `.git/hooks/**` — descent permission is
+                # `_dir_visible`'s job; the file-level check below re-applies
+                # the .git policy to leaves.
+                if _dir_visible(parts):
+                    try:
+                        visited.add(_dir_key(path))
+                    except OSError:
+                        pass
+                    yield from _walk(path, rel, link_pair)
+                continue
+            if entry.is_file(follow_symlinks=False) and _git_visible(parts):
+                if link_pair is None:
+                    yield _WalkEntry(path, rel)
+                else:
+                    # file under a symlinked directory: name link and target
+                    sub = rel[len(link_pair[0]) + 1:]
+                    yield _WalkEntry(path, f"{rel} -> {link_pair[1]}/{sub}")
+
+    def _symlink_entry(path: Path, rel: str, follow: bool,
+                       seen: set[tuple[int, int]]) -> Iterable[_WalkEntry]:
+        try:
+            st = os.stat(path)  # follows the chain; ELOOP on a cycle
+        except OSError as e:
+            # NB: this is a generator, so refusals must be *yielded* — a
+            # `return (entry,)` would only set StopIteration.value and vanish.
+            if e.errno == errno.ELOOP:
+                yield _WalkEntry(None, rel, "symlink loop (ELOOP) — not followed")
+            else:
+                yield _WalkEntry(None, rel,
+                                 "broken symlink (unresolvable target)")
+            return
+        if stat.S_ISDIR(st.st_mode):
+            if not follow:
+                yield _WalkEntry(None, rel,
+                                 "symlink not followed (--no-follow-symlinks)")
+                return
+            key = (st.st_dev, st.st_ino)
+            if key in seen:
+                yield _WalkEntry(None, rel,
+                                 "symlink loop — target directory already "
+                                 "scanned, skipped")
+                return
+            seen.add(key)
+            target = Path(os.path.realpath(path))
+            # R1b: the 'link -> target' attribution names where content
+            # really lives — only when that is OUTSIDE the scan root. An
+            # in-root link (a convenience alias inside the tree) keeps its
+            # plain relative path, which is already unambiguous.
+            pair = None if _within_root(target, root) else (rel, str(target))
+            yield from _walk(path, rel, pair)
+            return
+        if stat.S_ISREG(st.st_mode):
+            if not follow:
+                yield _WalkEntry(None, rel,
+                                 "symlink not followed (--no-follow-symlinks)")
+                return
+            target = os.path.realpath(path)
+            display = rel if _within_root(Path(target), root) \
+                else f"{rel} -> {target}"
+            yield _WalkEntry(path, display)
+            return
+        return  # fifo/socket/device behind a link: nothing to scan
+
+    yield from _walk(root, "", None)
 
 
 # BOM sniffing order matters: UTF-32-LE's BOM starts with UTF-16-LE's, so the
@@ -494,27 +638,26 @@ def _read_scannable(path: Path) -> tuple[str, bool, bool]:
 def scan_file(path: Path, rules: list[Rule], root: Path,
               honor_ignores: bool = False, *,
               deadline: float | None = None,
-              timeout: float | None = None
+              timeout: float | None = None,
+              rel: str | None = None,
               ) -> tuple[list[Finding], int, str, bool, list[Finding], bool]:
     """Scan one file. Returns (candidates, suppressed, text, truncated, final,
     decodable).
 
     Candidates are unverified: `scan_path` runs them through the verifier
     before they become findings. Correlation rules (`requires_pattern`) are
-    resolved here, because only this function has the whole file text.
+    resolved in `_scan_text`, because only it has the whole file text.
     `final` carries evidence-backed findings (invisible-unicode marker,
     stage-2 decoded payloads) that skip grading because the evidence is the
     decode itself, not a judgement about the line.
+
+    `rel` overrides the reported path (R1b `link -> target` display); the
+    default is the path relative to `root`.
 
     `deadline` (from `--timeout SEC`) is checked between rules and inside
     match storms, so a single pathological file cannot outlive the budget —
     expiry raises the same InputError `scan_path` raises between files.
     """
-
-    def _check_deadline() -> None:
-        if deadline is not None and time.monotonic() > deadline:
-            raise InputError(f"timed out after {timeout:g} s")
-
     try:
         text, truncated, decodable = _read_scannable(path)
     except OSError as e:
@@ -522,13 +665,35 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
         # Raised as UnreadableFileError so `scan_path` can record the file and
         # keep walking instead of discarding the readable files' findings (V5).
         raise UnreadableFileError(f"cannot read {path}: {e.strerror or e}") from None
+    if rel is None:
+        rel = str(path.relative_to(root)) if path != root else path.name
+    candidates, suppressed, final = _scan_text(
+        text, rel, rules, honor_ignores, deadline=deadline, timeout=timeout)
+    return candidates, suppressed, text, truncated, final, decodable
+
+
+def _scan_text(text: str, rel: str, rules: list[Rule], honor_ignores: bool, *,
+               deadline: float | None = None,
+               timeout: float | None = None,
+               ) -> tuple[list[Finding], int, list[Finding]]:
+    """Match `rules` against in-memory text, reported as `rel`.
+
+    Returns (candidates, suppressed, final). The matcher half of `scan_file`,
+    split out so archive members (R3) — which never become files on disk —
+    run through the identical rule passes: raw, invisible-normalized, and
+    stage-2 decoded payloads.
+    """
+
+    def _check_deadline() -> None:
+        if deadline is not None and time.monotonic() > deadline:
+            raise InputError(f"timed out after {timeout:g} s")
+
     candidates: list[Finding] = []
     final: list[Finding] = []
     suppressed = 0
-    rel = str(path.relative_to(root)) if path != root else path.name
     lines = text.splitlines()
     if honor_ignores and NOQA_FILE in "\n".join(lines[:10]):
-        return [], len(lines), text, truncated, [], decodable  # wholesale suppression, counted as suppressed
+        return [], len(lines), []  # wholesale suppression, counted as suppressed
     rule_by_id = {r.id: r for r in rules}
     for rule in rules:
         _check_deadline()
@@ -621,7 +786,7 @@ def scan_file(path: Path, rules: list[Rule], root: Path,
                        f"{assign_line}): {m.group(0)[:60]!r} in the decoded text",
                 decoded_from=f"{var}@{assign_line}",
             ))
-    return candidates, suppressed, text, truncated, final, decodable
+    return candidates, suppressed, final
 
 
 def _verification_alias(rel: str) -> str:
@@ -641,13 +806,119 @@ def _verification_alias(rel: str) -> str:
     return rel
 
 
+def _archive_kind(name: str) -> str | None:
+    """'zip', 'tar', or None. Only containers shipped as skills (R3) count:
+    a plain `.gz` blob is not an archive and stays on the binary-skip path."""
+    low = name.lower()
+    if low.endswith(ARCHIVE_SUFFIXES_TAR):
+        return "tar"
+    if low.endswith(ARCHIVE_SUFFIXES_ZIP):
+        return "zip"
+    return None
+
+
+def _member_escapes(name: str) -> bool:
+    """Does this member name try to leave the archive? Absolute paths,
+    drive letters, and any `..` that climbs above the root (zip-slip)."""
+    pure = PurePosixPath(name)
+    if pure.is_absolute():
+        return True
+    if pure.parts and ":" in pure.parts[0]:  # windows drive/URI prefix
+        return True
+    depth = 0
+    for part in pure.parts:
+        if part == "..":
+            depth -= 1
+            if depth < 0:
+                return True
+        elif part not in (".", ""):
+            depth += 1
+    return False
+
+
+def _read_archive_members(path: Path, rel: str, kind: str, *,
+                          max_bytes: int) -> tuple[list[tuple[str, bytes]], list[str]]:
+    """Read an archive's members into memory. Returns (members, warnings).
+
+    Members are `(name, data)` pairs — nothing is ever written to disk, so a
+    traversal name has nowhere to escape to (R3c) and the read itself bounds
+    a bomb (R3b). Every refusal appends a warning the result must carry:
+    - entry count over ARCHIVE_MAX_ENTRIES → the whole archive is refused;
+    - member over max_bytes, or compressed:uncompressed ratio over
+      ARCHIVE_BOMB_RATIO → that member is refused (zip only, where the
+      header states both sizes);
+    - `_member_escapes(name)` → that member is refused.
+    A corrupt container is a warning plus an empty member list, not a crash.
+    """
+    members: list[tuple[str, bytes]] = []
+    warnings: list[str] = []
+
+    def _skip(name: str, why: str) -> None:
+        warnings.append(f"warning: skipped archive member {rel}!{name}: {why}")
+
+    try:
+        if kind == "zip":
+            with zipfile.ZipFile(path) as zf:
+                infos = [i for i in zf.infolist() if not i.is_dir()]
+                if len(infos) > ARCHIVE_MAX_ENTRIES:
+                    warnings.append(
+                        f"warning: skipped archive {rel}: {len(infos)} members "
+                        f"exceed the {ARCHIVE_MAX_ENTRIES}-entry bound")
+                    return members, warnings
+                for info in infos:
+                    name = info.filename
+                    if _member_escapes(name):
+                        _skip(name, "member path escapes the archive (traversal)")
+                        continue
+                    if info.file_size > max_bytes:
+                        _skip(name, f"{info.file_size} uncompressed bytes exceed "
+                                    f"--archive-max-bytes={max_bytes}")
+                        continue
+                    if info.compress_size > 0 and (
+                            info.file_size / info.compress_size > ARCHIVE_BOMB_RATIO):
+                        _skip(name, f"compression ratio over {ARCHIVE_BOMB_RATIO}:1 "
+                                    "(zip-bomb guard)")
+                        continue
+                    with zf.open(info) as fh:
+                        members.append((name, fh.read(max_bytes + 1)))
+        else:
+            with tarfile.open(path, "r:*") as tf:
+                infos = [m for m in tf.getmembers() if m.isfile()]
+                if len(infos) > ARCHIVE_MAX_ENTRIES:
+                    warnings.append(
+                        f"warning: skipped archive {rel}: {len(infos)} members "
+                        f"exceed the {ARCHIVE_MAX_ENTRIES}-entry bound")
+                    return members, warnings
+                for m in infos:
+                    if _member_escapes(m.name):
+                        _skip(m.name, "member path escapes the archive (traversal)")
+                        continue
+                    if m.size > max_bytes:
+                        _skip(m.name, f"{m.size} uncompressed bytes exceed "
+                                      f"--archive-max-bytes={max_bytes}")
+                        continue
+                    fh = tf.extractfile(m)
+                    if fh is None:
+                        continue
+                    members.append((m.name, fh.read(max_bytes + 1)))
+    except (zipfile.BadZipFile, tarfile.TarError, OSError, EOFError,
+            zlib.error, MemoryError) as e:
+        # A truncated or corrupt container is untrusted input, not a bug:
+        # warn, keep whatever complete members were read, and move on.
+        warnings.append(f"warning: skipped unreadable archive {rel}: {e}")
+        return members, warnings
+    return members, warnings
+
+
 def scan_path(target: str | Path, rules_path: str | None = None, *,
               honor_ignores: bool = False,
               exclude: list[str] | None = None,
               ignore_patterns: list[str] | None = None,
               profile: str = "balanced",
               timeout: float | None = None,
-              max_files: int | None = None) -> ScanResult:
+              max_files: int | None = None,
+              follow_symlinks: bool = True,
+              archive_max_bytes: int = DEFAULT_ARCHIVE_MAX_BYTES) -> ScanResult:
     """Scan a path. Pattern matches are candidates; the verifier grades them.
 
     Only `exploitable` findings are reported as findings — everything else is kept in
@@ -695,26 +966,34 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
     deadline = time.monotonic() + timeout if timeout else None
     linked: set[tuple[int, int]] = set()  # (st_dev, st_ino) of resolved symlink targets
     over_limit = 0
-    for p in _iter_target_files(root):
-        rel = str(p.relative_to(root)) if p != root else p.name
+    for entry in _iter_target_files(root, follow_symlinks):
+        rel, p = entry.rel, entry.path
+        if p is None:
+            # R1c/R1d: a link the policy declined (loop, broken, or
+            # --no-follow-symlinks). A skip the output does not explain is
+            # indistinguishable from a clean scan, so it lands in
+            # files_skipped WITH its reason.
+            result.files_skipped += 1
+            result.warnings.append(f"warning: skipped {rel}: {entry.reason}")
+            continue
         if p.is_symlink():
-            # Resolve the link: broken links and loops surface as skipped
-            # files, never as hangs; a target inode seen before is a cycle or
-            # a second link to an already-scanned file.
+            # A file link resolves here: a target inode seen before is a
+            # cycle or a second link to an already-scanned file.
             try:
                 st = os.stat(p)  # follows the chain; ELOOP on a cycle
             except OSError:
                 result.files_skipped += 1
+                result.warnings.append(f"warning: skipped {rel}: unresolvable symlink")
                 continue
             if not stat.S_ISREG(st.st_mode):
                 continue
             target = (st.st_dev, st.st_ino)
             if target in linked:
                 result.files_skipped += 1
+                result.warnings.append(
+                    f"warning: skipped {rel}: symlink target already scanned")
                 continue
             linked.add(target)
-        elif not p.is_file():
-            continue  # directories and other non-regular entries
         if excludes and _is_excluded(rel, excludes):
             result.files_skipped += 1
             continue
@@ -727,6 +1006,38 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
             continue
         if deadline is not None and time.monotonic() > deadline:
             raise InputError(f"timed out after {timeout:g} s")
+        kind = _archive_kind(p.name)
+        if kind is not None:
+            # R3: the container is opened and its text members matched in
+            # memory — never extracted — with findings attributed
+            # '<archive>!<inner/path>'. Every guard refusal is a warning
+            # counted in files_skipped, not a silent hole.
+            member_reports, archive_warnings = _read_archive_members(
+                p, rel, kind, max_bytes=archive_max_bytes)
+            result.warnings.extend(archive_warnings)
+            result.files_skipped += len(archive_warnings)
+            for name, data in member_reports:
+                if max_files is not None and result.files_scanned >= max_files:
+                    over_limit += 1
+                    break
+                mrel = f"{rel}!{name}"
+                if _looks_binary(data[:8192]):
+                    result.binary_files_skipped += 1
+                    continue
+                text, decodable = _decode_scannable(data)
+                found, suppressed_members, member_final = _scan_text(
+                    text, mrel, rules, honor_ignores,
+                    deadline=deadline, timeout=timeout)
+                result.files_scanned += 1
+                scanned_rels.append(mrel)
+                result.suppressed += suppressed_members
+                if not decodable:
+                    result.undecodable_files.append(mrel)
+                if found:
+                    candidates.extend(found)
+                    sources[found[0].file] = text
+                final.extend(member_final)
+            continue
         try:
             if _looks_binary(_read_head(p)):
                 # V8: a NUL-dense non-text file is reported separately instead
@@ -735,7 +1046,7 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
                 continue
             found, suppressed, text, truncated, file_final, decodable = scan_file(
                 p, rules, root, honor_ignores=honor_ignores,
-                deadline=deadline, timeout=timeout)
+                deadline=deadline, timeout=timeout, rel=rel)
         except (UnreadableFileError, OSError):
             # V5: one unreadable file must not discard the findings already
             # collected from the readable rest — record it, keep walking; the

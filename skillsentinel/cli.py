@@ -14,7 +14,7 @@ from . import __version__
 from .baseline import classify as classify_baseline, finding_key, write_baseline
 from .detonate import DetonationRefusedError, detonate_tree
 from .rules import load_rules, SEVERITY_ORDER
-from .scanner import InputError, scan_path, to_sarif
+from .scanner import (DEFAULT_ARCHIVE_MAX_BYTES, InputError, scan_path, to_sarif)
 from .verifier import VERIFIERS_BY_NAME
 from .watch import (write_snapshot, load_snapshot, diff_snapshots, snapshot_dir,
                     rescan_changes)
@@ -154,12 +154,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # only under --honor-ignores — exactly like inline suppression markers.
     ignore_patterns = load_ignore_file(root) if args.honor_ignores else []
     result = scan_path(args.path, args.rules,
-                      honor_ignores=args.honor_ignores,
+                       honor_ignores=args.honor_ignores,
                        exclude=list(args.exclude),
                        ignore_patterns=ignore_patterns,
                        profile=args.profile,
                        timeout=args.timeout,
-                       max_files=args.max_files)
+                       max_files=args.max_files,
+                       follow_symlinks=not args.no_follow_symlinks,
+                       archive_max_bytes=args.archive_max_bytes)
     # Baseline classification happens before reporting: the report must still
     # show every finding (a baseline never hides anything from the report), so
     # classification only computes which findings count for the exit code.
@@ -223,6 +225,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 lambda: print(f"\nSARIF written to {args.sarif}"),
                 "the SARIF confirmation to stdout"):
             return 2
+    # R1c/R1d/R3b: refusals the scan accounted for (loops, unfollowed or
+    # broken links, guarded archives) are part of the verdict's evidence —
+    # they go to stderr in both output modes, never silently dropped.
+    for w in result.warnings:
+        print(w, file=sys.stderr)
     if result.limit_reached is not None:
         n, m = result.limit_reached
         print(f"error: limit reached: {n} of {m} files scanned "
@@ -365,6 +372,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-files", type=int, default=None, metavar="N",
                    help="scan at most N files, then exit 2 with a limit report; "
                         "bounds huge trees without silently ignoring the rest")
+    s.add_argument("--no-follow-symlinks", action="store_true",
+                   help="do not descend into or scan symlinked files/directories; "
+                        "every declined link is counted in files_skipped with a "
+                        "warning naming it (symlinked skill dirs ARE followed by "
+                        "default — that is how skills are installed)")
+    s.add_argument("--archive-max-bytes", type=int,
+                   default=DEFAULT_ARCHIVE_MAX_BYTES, metavar="N",
+                   help="per-member uncompressed byte budget for archives scanned "
+                        "in memory (zip/tar.gz/tgz/whl); members over N are skipped "
+                        f"with a warning (default: {DEFAULT_ARCHIVE_MAX_BYTES})")
     s.add_argument("--detonate", action="store_true",
                    help="run discovered scripts (.sh/.bash/.py/.js/.rb/.pl/.ps1 "
                         "and files named `install`) in a disposable bwrap sandbox "

@@ -429,9 +429,9 @@ def _walk_numbers(node, path=()):
 
 
 class Version033Tests(unittest.TestCase):
-    def test_version_is_033_everywhere(self):
-        self.assertEqual(pyproject_version(), "0.3.3")
-        self.assertEqual(skillsentinel.__version__, "0.3.3")
+    def test_version_is_034_everywhere(self):
+        self.assertEqual(pyproject_version(), "0.3.4")
+        self.assertEqual(skillsentinel.__version__, "0.3.4")
 
     def test_version_changelog_documents_033(self):
         text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")

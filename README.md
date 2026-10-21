@@ -15,7 +15,7 @@
 [![CI](https://github.com/artemasmith/skillsentinel/actions/workflows/skillsentinel.yml/badge.svg)](https://github.com/artemasmith/skillsentinel/actions/workflows/skillsentinel.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
-[![Rules](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fartemasmith%2Fskillsentinel%2Fv0.3.3%2Frules%2Frules.json&query=%24.rules.length&label=rules&color=purple)](rules/rules.json)
+[![Rules](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fartemasmith%2Fskillsentinel%2Fv0.3.4%2Frules%2Frules.json&query=%24.rules.length&label=rules&color=purple)](rules/rules.json)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-success.svg)](#zero-dependencies)
 [![OWASP Agentic Top 10](https://img.shields.io/badge/mapped%20to-OWASP%20Agentic%20Top%2010-red.svg)](#what-it-detects)
 
@@ -36,12 +36,12 @@ pattern match ──► candidate ──► file-local verifier ──► findin
                           with a written reason                is traceable
 ```
 
-1. **Pattern match → candidate.** 44 rules (as of v0.3.3 — `skillsentinel rules` prints the live count), cheap, high recall, allowed to be noisy.
+1. **Pattern match → candidate.** 46 rules (as of v0.3.4 — `skillsentinel rules` prints the live count), cheap, high recall, allowed to be noisy.
 2. **Candidate → verdict.** A deterministic, file-local verifier confirms it (`exploitable` — e.g. a secret read in a file that also performs network egress), downgrades it (`capability` — a dual-use primitive, credible but not proof), or drops it (`low_trust`) — in that case the candidate stays visible in `--json` with its demotion reason.
 
 What the verifier actually decides on: is the line a directive to an agent, code, or prose? Is it inside a fenced code block or explicitly negated? Is a secret read corroborated by egress **in the same file**? Is a base64 blob accompanied by a decode call? Does the line merely enumerate attack signatures (a detection table) instead of issuing them? Four profiles (`--profile strict|balanced|loose|paranoid`) trade precision against recall. No LLM, no network, no hidden state.
 
-A defensive word ("detection", "attacker", "scanner") only demotes a hit when it *governs* the match — before it ("detects the phrase ...", negation) or inside a URL token — not when it is the object of the attack sentence ("send `~/.ssh/id_rsa` to the attacker"), where it is the attack naming its own target.
+A defensive word ("detection", "attacker", "scanner") only demotes a hit when it *governs* the match — before it in the same sentence segment ("detects the phrase ...", negation) or inside a URL token — not when it is the object of the attack sentence ("send `~/.ssh/id_rsa` to the attacker"), where it is the attack naming its own target. Negation itself is multilingual and positional (rework r1): a prefix negator — ru «не»/«никогда не»/«нельзя», de nicht/niemals/nie, zh 不要/别/不得, es no/nunca, en never/do not… — demotes with a written reason naming it, never crosses a sentence boundary, and cannot cancel a rule whose own phrase opens with the negation.
 
 **Anti-obfuscation passes.** Before grading, the scanner also matches rules against the file with invisible characters (zero-width, soft hyphen, bidi/format) stripped and NFKC compatibility forms folded — so "Ignore all previous instructions" with a spliced-in U+200B still hits SS001, and the file gets an extra `SS039 invisible characters normalized` finding at the smuggled line. A second pass correlates payload blobs with execution: a base64/hex blob assigned to a variable that a later line `exec`/`eval`s is decoded, and the decoded text is run through the same rules — a confirmed hit carries `decoded_from` in `--json`. Correlated, not assumed: a blob nobody executes is inert test data and stays quiet.
 
@@ -85,8 +85,8 @@ ignores `-`, `_` and `.`). The command, the import package and the GitHub repo s
 Pin a release from git instead:
 
 ```bash
-pipx install "git+https://github.com/artemasmith/skillsentinel@v0.3.3"
-pip install git+https://github.com/artemasmith/skillsentinel@v0.3.3
+pipx install "git+https://github.com/artemasmith/skillsentinel@v0.3.4"
+pip install git+https://github.com/artemasmith/skillsentinel@v0.3.4
 ```
 
 `pip install --user` works too (the rules catalog is found under the user base as of 0.3.2). Zero runtime dependencies (stdlib only), Python ≥ 3.10. From a checkout no install is needed at all — `python3 -m skillsentinel …` runs in place.
@@ -106,6 +106,9 @@ This is the only exit-code table in the project; `scan --help` prints the same c
 
 Every error is one line on stderr, never a traceback. Two flags bound runaway trees without silently ignoring anything: `--timeout SEC` aborts with `timed out after SEC s` (exit 2), `--max-files N` scans the first N files, reports `limit reached: N of M files` and exits 2. Oversize files (> 2 MB) are scanned as head + tail 512 KB windows and marked `"truncated": true` in the JSON rather than skipped.
 
+The walk descends symlinked directories by default — that is how skill trees are actually installed (a `skills-live` layout of 35 symlinks scanned 2 files before v0.3.4). Files reached through an out-of-root link are reported as `link -> target` so a finding names both; loops terminate on a visited-inode set. Every link the policy declines — broken, looping, or declined wholesale with `--no-follow-symlinks` — lands in `files_skipped` with a stderr warning naming it and the reason (the JSON carries them in `warnings`).
+
+Archives shipped as skills (`.zip`, `.tar.gz`, `.tgz`, `.whl`) are opened and their text members scanned **in memory** — nothing is ever extracted — with findings attributed `payload.zip!<inner/path>`. The archive is untrusted input, so four guards refuse rather than trust it: per-member uncompressed size over `--archive-max-bytes` (default 5 MB), more than 200 members, a compression ratio over 100:1 (zip-bomb), and member names that try to escape the archive (zip-slip). Each refusal is a warning counted in `files_skipped`.
 ## Baselines
 
 **A baseline hides known-accepted findings from the exit code; it never hides them from the report.** Every finding is still printed — a baselined one is tagged `(baselined)` in text output — and still lands in `--json` and `--sarif` exactly as before. The baseline decides one thing: the exit code.
@@ -162,7 +165,7 @@ $ rm -r ~/.hermes/skills/new-skill skills-baseline.json
 
 ```console
 $ python3 -m skillsentinel scan tests/fixtures/malicious
-SkillSentinel v0.3.3 — scanned .../skillsentinel/tests/fixtures/malicious (10 text, 0 binary skipped, 0 skipped, profile: balanced)
+SkillSentinel v0.3.4 — scanned .../skillsentinel/tests/fixtures/malicious (10 text, 0 binary skipped, 0 skipped, profile: balanced)
 Confirmed findings: 43 (critical: 27, high: 15, medium: 1, low: 0); 3 candidate(s) demoted
 
 == CRITICAL ==
@@ -185,12 +188,12 @@ Confirmed findings: 43 (critical: 27, high: 15, medium: 1, low: 0); 3 candidate(
 exit code 1
 
 $ python3 -m skillsentinel scan tests/fixtures/benign
-SkillSentinel v0.3.3 — scanned .../skillsentinel/tests/fixtures/benign (6 text, 0 binary skipped, 0 skipped, profile: balanced)
+SkillSentinel v0.3.4 — scanned .../skillsentinel/tests/fixtures/benign (6 text, 0 binary skipped, 0 skipped, profile: balanced)
 No exploitable findings. Supply chain looks clean. ✓
 exit code 0
 
 $ python3 -m skillsentinel scan tests/fixtures/benign-hard   # lookalikes that are NOT malicious
-SkillSentinel v0.3.3 — scanned .../skillsentinel/tests/fixtures/benign-hard (6 text, 0 binary skipped, 0 skipped, profile: balanced)
+SkillSentinel v0.3.4 — scanned .../skillsentinel/tests/fixtures/benign-hard (6 text, 0 binary skipped, 0 skipped, profile: balanced)
 No exploitable findings. Supply chain looks clean. ✓; 13 candidate(s) demoted — see --json for reasons
 exit code 0
 
@@ -226,16 +229,16 @@ exit code 1
 
 ## What it detects
 
-44 rules (as of v0.3.3 — `skillsentinel rules` prints the live count), all mapped to the [OWASP Agentic Top 10](https://genai.owasp.org/):
+46 rules (as of v0.3.4 — `skillsentinel rules` prints the live count), all mapped to the [OWASP Agentic Top 10](https://genai.owasp.org/):
 
 | Category | Severity range | OWASP | Examples |
 |---|---|---|---|
-| Prompt injection | high–critical | ASI-01, ASI-02, ASI-08 | "ignore previous instructions", role override, system-prompt exfiltration, jailbreak toggles |
+| Prompt injection | high–critical | ASI-01, ASI-02, ASI-08 | "ignore previous instructions", role override, system-prompt exfiltration, jailbreak toggles, non-English override directives (ru/zh/de/es — SS045/SS046) |
 | Invisible unicode | medium–critical | ASI-01 | zero-width chars, U+E0000 tag characters (ASCII smuggling), bidi overrides, variation selectors |
 | Obfuscation | medium–critical | ASI-01 | long base64 blobs, base64-eval exec, hex payloads |
 | RCE download | high–critical | ASI-06 | `curl \| bash`, download-to-/tmp-then-execute |
 | Credential access | critical (dual-use) | ASI-04 | `~/.ssh/id_rsa`, `.env`, keychains, browser stores |
-| Exfiltration | high–critical | ASI-09 | pastebin/0x0/transfer.sh, webhook.site, Discord/Slack webhooks, ngrok |
+| Exfiltration | high–critical | ASI-09 | pastebin/0x0/transfer.sh, webhook.site, Discord/Slack webhooks, ngrok, non-English exfil verb next to a sensitive path |
 | Miners | critical | ASI-06 | `stratum+tcp://`, xmrig flags, pool domains |
 | Persistence | high–critical | ASI-06 | crontab, systemd units, `.bashrc` appends, git hooks, `authorized_keys` |
 | MCP backdoors | high–critical | ASI-01, ASI-06 | command injection in `mcpServers.command`, `npx` from URLs, injection in tool descriptions |
@@ -271,7 +274,7 @@ jobs:
     timeout-minutes: 20    # belt and braces: the action also enforces `timeout` below
     steps:
       - uses: actions/checkout@v4
-      - uses: artemasmith/skillsentinel@v0.3.3
+      - uses: artemasmith/skillsentinel@v0.3.4
         with:
           path: .                      # file or directory to scan
           severity: medium             # fail the build at/above this severity
@@ -284,7 +287,7 @@ The scan cannot hang your job: the `timeout` input is passed to the scanner as `
 
 When `sarif` is set, the report is uploaded to the GitHub **Security tab** (`github/codeql-action/upload-sarif`, category `skillsentinel`) with `continue-on-error`: a failed upload (e.g. the workflow lacks `security-events: write`) emits a `::warning` annotation but never fails your job — the SARIF file itself stays on disk as the fallback. Add `security-events: write` to the calling workflow's `permissions` (as above) to get the upload.
 
-Pinned to a release tag on purpose: running security tooling from `@main` means whatever was pushed last. `v0.3.0` brought the C1–C4 hardening (bounded regex cost, real `--timeout`, a payload that cannot cancel its own detection, the Action timeout/SARIF plumbing above); `v0.3.1` closes the detection bypasses found by an independent re-check; `v0.3.2` makes documentation an instruction surface (a `README.md` is read by an agent like a `SKILL.md`) and stops a payload from cancelling its own detection with its own wording (see [CHANGELOG.md](CHANGELOG.md)); `v0.3.3` closes the eight items of the v0.3.2 audit (watch on a missing path, snapshot root mismatch, dead SARIF schema URL, stale demo counts, unreadable files, single-file detonation, detonation suffixes, binary reporting — see [CHANGELOG.md](CHANGELOG.md)). Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/workflows/skillsentinel.yml) (test matrix 3.10–3.14, a scan-speed gate that fails CI on a performance regression, self-scan, SARIF artifact + upload to the Security tab, and a scheduled daily drift scan of this very repo's agent configs).
+Pinned to a release tag on purpose: running security tooling from `@main` means whatever was pushed last. `v0.3.0` brought the C1–C4 hardening (bounded regex cost, real `--timeout`, a payload that cannot cancel its own detection, the Action timeout/SARIF plumbing above); `v0.3.1` closes the detection bypasses found by an independent re-check; `v0.3.2` makes documentation an instruction surface (a `README.md` is read by an agent like a `SKILL.md`) and stops a payload from cancelling its own detection with its own wording (see [CHANGELOG.md](CHANGELOG.md)); `v0.3.3` closes the eight items of the v0.3.2 audit (watch on a missing path, snapshot root mismatch, dead SARIF schema URL, stale demo counts, unreadable files, single-file detonation, detonation suffixes, binary reporting — see [CHANGELOG.md](CHANGELOG.md)); `v0.3.4` fixes the recall gaps of the v0.3.3 audit: symlinked skill directories are descended by default, injection directives in other languages are caught by language-agnostic signals, and archives shipped as skills are scanned in memory with bomb/slip guards (see [CHANGELOG.md](CHANGELOG.md)). Or copy the full workflow from [.github/workflows/skillsentinel.yml](.github/workflows/skillsentinel.yml) (test matrix 3.10–3.14, a scan-speed gate that fails CI on a performance regression, self-scan, SARIF artifact + upload to the Security tab, and a scheduled daily drift scan of this very repo's agent configs).
 
 ## pre-commit
 
@@ -293,7 +296,7 @@ Fail the commit when a skill file or agent config in the repo carries confirmed 
 ```yaml
 repos:
   - repo: https://github.com/artemasmith/skillsentinel
-    rev: v0.3.3
+    rev: v0.3.4
     hooks:
       - id: skillsentinel
 ```
@@ -306,7 +309,7 @@ The hook (see [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml)) scans the repo
 scan <path> [--json] [--sarif OUT] [--severity SEV] [--profile P] [--exclude GLOB]
            [--honor-ignores] [--detonate] [--allow-net] [--show-inconclusive]
            [--rules rules.json] [--timeout SEC] [--max-files N]
-           [--write-baseline FILE] [--baseline FILE]
+           [--no-follow-symlinks] [--archive-max-bytes N] [--write-baseline FILE] [--baseline FILE]
 watch init <dir> [--snapshot FILE]   record SHA-256 snapshot
 watch diff <dir> [--snapshot FILE] [--rescan]
                                      exit 1 on any drift (rug-pull);
@@ -330,12 +333,14 @@ Pure Python stdlib (`re`, `json`, `hashlib`, `argparse`, `subprocess`, `pathlib`
 - Detonation sandboxes are network-isolated by default (`--unshare-net`): raw sockets cannot connect, and shimmed `curl`/`wget`/`nc`/`ssh` log every attempted destination. Non-PATH binaries are not shimmed. With `--allow-net` the isolation is lifted and every detonation is stamped `network NOT isolated` — the log is then evidence, not a guarantee.
 - Detonation covers `.sh`/`.bash`/`.py`/`.js`/`.rb`/`.pl`/`.ps1` and files named `install` (shell scripts under `/bin/sh`, the others under their own interpreter — a missing interpreter on the host is recorded as a non-zero exit, never a silent skip). Other files (`.txt`, `.mjs`, …) are not detonated. `--detonate` also works on a single script file: `scan tool.sh --detonate` detonates that one script.
 - Drift detection is content-hash based: an attacker with write access to the snapshot file itself can re-pin it — store the snapshot outside the watched tree (or in CI).
+- Archive scanning covers the text members of zip/tar.gz/tgz/whl, in memory and bounded by `--archive-max-bytes`; other container formats and encrypted archives are not opened and count as binary skips.
+- Symlink descent is the default because skill trees are installed that way; on a tree where the links themselves are the attack surface, `--no-follow-symlinks` refuses every link with a counted, reasoned skip.
 - Linux-centric: detonation needs bwrap on Linux; unicode and static rules work anywhere.
 
 ## Testing & contributing
 
 ```bash
-python3 -m unittest discover -s tests -v   # 226 tests as of v0.3.3 (the runner prints the count)
+python3 -m unittest discover -s tests -v   # 276 tests as of v0.3.4 (the runner prints the count)
 ```
 
 Fixtures: 10 malicious skills (real attack patterns, inert payloads), 6 clean skills, and a **`benign-hard` corpus of the false positives this scanner actually produced** while being built — a fenced install command, a legit SSH backup, a detection-signature table, a systemd deploy, a script reading the user's own saved password. All three sets are asserted: every malicious directory flagged, zero findings on both benign sets, every demotion carrying a reason.
