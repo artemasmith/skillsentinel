@@ -21,3 +21,20 @@ budget:
 metrics:
   tokens_used: 0
   retries: 0
+verify_report:
+  verdict: BLOCK
+  checked_at: 2026-10-21T00:00
+  reviewer_sha: ""
+  claims:
+    - {claim: "AC1: six doc contexts detected and demoted", evidence: "tests/test_doc_context_demotion.py:86,99,111,123,136,152 (all pass)", ok: true}
+    - {claim: "AC2: demotion visible, demoted[] with non-empty context-naming reason, never silent", evidence: "tests/test_doc_context_demotion.py:168 + tests/test_review_t3501ae36_adversarial.py R2; live corpus demoted=79/79 with reason", ok: true}
+    - {claim: "AC3: injection classes never demoted, injection in ``` stays finding with rc!=0", evidence: "tests/test_doc_context_demotion.py:187,205,219 + tests/test_review_t3501ae36_adversarial.py R1 (SS001/SS002/SS004/SS006/SS007/SS008, rc!=0)", ok: true}
+    - {claim: "AC4/P4c: SS041 in .md directive settled by context rules, reason names context", evidence: "tests/test_doc_context_demotion.py:235", ok: true}
+    - {claim: "Live corpus findings drop to 0, files_scanned parity", evidence: "base c01b33b2: rc=1 findings=4 files=531; branch: rc=0 findings=0 demoted=79 files=531 skipped=0; all 4 base pairs present in demoted[]", ok: true}
+    - {claim: "Fixture corpora keep exit 1 and counts", evidence: "malicious 43, i18n 8, archives 2 — identical on base and branch, rc=1 all", ok: true}
+    - {claim: "Weakened assert test_v034_rework3.py:301 still meaningful", evidence: "rc in (0,1) + exploitable<=4 count guard kept; disclosed in resume.next_step; my run confirms rc=0 findings=0", ok: true}
+    - {claim: "CI matrix green on head 4441110", evidence: "run 39609127822: test 3.10-3.14, self-scan, bench, packaging, action-gate — 9/9 success", ok: true}
+  gaps:
+    - {expected: "real payload of a demotable class hidden in doc context must not silently vanish", actual: "SS020+SS026 SSH-key exfiltrator in a ```python fence of SKILL.md is demoted, scan exit=0 findings=0 (counterexample C1 in journal/notes/skillsentinel/review-t_3501ae36-2026-10-21.md); behaviour matches AC3 as written, so this is a security trade-off for the card owner, not a coder defect", evidence: "tests/test_review_t3501ae36_adversarial.py R4 (pins current behaviour)"}
+  next_ticket: "Решение Артёма: расширять ли NEVER_DEMOTE_CATEGORIES на exfiltration/credential-access/obfuscation в directive-контексте (см. вопрос в journal/notes/skillsentinel/review-t_3501ae36-2026-10-21.md)"
+  checked_at_note: "gates re-run independently; unittest 314 OK (4 skips) incl. 6 reviewer adversarial tests"
