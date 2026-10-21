@@ -24,7 +24,7 @@ metrics:
 verify_report:
   verdict: BLOCK
   checked_at: 2026-10-21T00:00
-  reviewer_sha: ""
+  reviewer_sha: "8b18f168c015fc7569813b6f3b10bcb069cbd2c7"
   claims:
     - {claim: "AC1: six doc contexts detected and demoted", evidence: "tests/test_doc_context_demotion.py:86,99,111,123,136,152 (all pass)", ok: true}
     - {claim: "AC2: demotion visible, demoted[] with non-empty context-naming reason, never silent", evidence: "tests/test_doc_context_demotion.py:168 + tests/test_review_t3501ae36_adversarial.py R2; live corpus demoted=79/79 with reason", ok: true}
