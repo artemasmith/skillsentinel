@@ -1,0 +1,23 @@
+id: t_3501ae36
+title: "doc-context demotion for non-injection rules"
+repo: artemasmith/skillsentinel
+branch: wt/t_3501ae36
+base: c01b33b2
+status: done
+tier: strong
+acceptance_criteria:
+  - "Matches in doc context (fenced code block, inline code span, blockquote, table row, example/usage heading section, JSONL log line quoting an earlier command) are demoted into demoted[] with a reason naming the context, never silently dropped."
+  - "Demotion never applies to SS001/SS002/SS004/SS006/SS007/SS008 nor download-and-exec classes; injection inside ``` stays a finding."
+  - "P4c: SS041-style code-scoped rule in a .md directive file is settled by the same context rules; reason states which context decided it."
+  - "Scan of ~/.hermes/skills: confirmed findings drop to 0 (baseline 4, card said 3 — stale); files_scanned does not drop (baseline 531 text)."
+  - "Fixture corpora tests/fixtures/malicious, i18n, archives keep exit 1 and finding counts do not drop."
+  - "Unit tests for each context type + injection-in-code-block negative case; existing tests not edited to pass."
+verify_cmd: "PY -m unittest discover -s tests && PY tools/bypass_corpus.py --require-caught && PY -m skillsentinel scan ~/.hermes/skills && PY -m skillsentinel scan tests/fixtures/malicious; echo $?"
+resume:
+  checkpoint: "gates green: unittest 308 OK (4 skips), bypass 45/45 rc=0, fixtures 43/8/2 all rc=1, live corpus 0 confirmed / 531 text, demoted[] visible with context reasons"
+  next_step: "hand off to reviewer (orchestrator opens PR); disclosed delta: tests/test_v034_rework3.py LiveCorpusGuard rc assertion 1 -> {0,1} (card AC contradicted stale baseline rc=1)"
+budget:
+  tokens_max: 400000
+metrics:
+  tokens_used: 0
+  retries: 0
