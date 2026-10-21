@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass, field
 from itertools import islice
 
+from .rules import NEVER_DEMOTE_CATEGORIES, has_exfil_combo
+
 # Verdicts, strongest first. `exploitable` = the artifact can actually do the thing.
 VERDICT_ORDER = {"exploitable": 4, "capability": 3, "inconclusive": 2, "low_trust": 1}
 
@@ -472,15 +474,14 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
     # quoted or delegated match as documentation even in a directive file.
     # Generic context tells only — elision, a second quoted specimen, a
     # code-span object with restored user agency — never a bare quote (D11).
-    if _quoted_specimen_citation(line, raw):
+    # Injection classes never take the specimen reading (AC3): these screens
+    # are gated to the demotable categories, so a quoted SS006 stays the file
+    # acting instead of gaining a new demotion path this card added.
+    if rule.category not in NEVER_DEMOTE_CATEGORIES \
+            and _quoted_specimen_citation(line, raw):
         return ("low_trust", "quoted specimen citation — the enclosing quote "
                 "is elided or one of several quoted specimens on the line, "
                 "an enumeration of examples, not a directive being issued")
-    if rule_id == "SS006" and _ss006_delegation_with_agency(line, raw, next_line):
-        return ("inconclusive", "delegation, not concealment — the object is "
-                "a command quoted in a code span and the passage restores "
-                "the user's agency over it (they can still run it); the "
-                "agent is told to do its own job, not to hide the step")
 
     if ctx == "directive":
         return ("exploitable", "directive addressed to an agent with no benign reading")
@@ -623,34 +624,12 @@ def _quoted_specimen_citation(line: str, raw: str) -> bool:
                for a, b in _quote_spans(line) if (a, b) != enclosing)
 
 
-# SS006 precision screen: `You apply it; do NOT tell the user to run
-# `/skin` (they still can, but it's your job)` — the hide-activity pattern's
-# phrase head over a delegation directive. The object is a command quoted in
-# a code span and the passage restores the user's agency over it. Concealment
-# hides the step from the user; delegation names the command and leaves
-# running it to them.
-_SS006_RUN_OBJECT = re.compile(
-    r"\bto\s+(?:run|execute|invoke|call|use)\b[^`\n]{0,40}?`[^`\n]{1,60}`",
-    re.IGNORECASE)
-_AGENCY_CUE = re.compile(
-    r"\b(?:still\s+can|can\s+still|still\s+(?:may|could|might)|"
-    r"(?:may|could|might)\s+still|"
-    r"it'?s\s+(?:your|the\s+agent'?s)\s+job|is\s+(?:your|the\s+agent'?s)\s+job|"
-    r"up\s+to\s+(?:them|the\s+user|you)|at\s+any\s+time|whenever\s+they\s+want|"
-    r"if\s+they\s+(?:want|prefer|ask))\b", re.IGNORECASE)
-
-
-def _ss006_delegation_with_agency(line: str, raw: str, next_line: str = "") -> bool:
-    """SS006's phrase matched a delegation, not a concealment: the region from
-    the match to the end of the next line holds a run-verb whose object is a
-    code span AND an explicit user-agency cue over that same object."""
-    span = _matched_span(line, raw)
-    if span is None:
-        return False
-    region = " ".join(x for x in (line[span[1]:].strip(),
-                                  (next_line or "").strip()) if x)
-    return bool(_SS006_RUN_OBJECT.search(region)
-                and _AGENCY_CUE.search(region))
+# SS006 precision screen (REMOVED, rework of card t_3501ae36): the
+# "delegation, not concealment" screen demoted SS006 — a prompt-injection
+# rule — which AC3 forbids outright: an injection class never takes a
+# demotion from a card-added screen, in any context. The live-corpus line it
+# softened (autonomous-ai-agents/hermes-agent/references/themes.md) is base
+# behaviour confirmed exploitable again.
 
 
 # Rework r3 (card t_c7ce62b2, probe T2): the sensitive paths SS046 keys on,
@@ -916,6 +895,13 @@ def verify_findings(findings: list, sources: dict[str, str],
         # an exfil destination wrapped to the next line is still the
         # destination of this directive.
         next_line = lines[f.line] if f.line < len(lines) else ""
+        # Fail-closed combo (card t_3501ae36, rework): a secret source and
+        # egress/subprocess within +-5 lines of the match forbid every
+        # demotion — the hit is exfiltration staging, not a quoted specimen.
+        # Applied ahead of the profile levers so no profile (balanced/loose/
+        # paranoid) can soften it, and before the doc-context pass, which
+        # re-checks the same signal and would otherwise overwrite the verdict.
+        combo = has_exfil_combo(lines, f.line)
         verdict, reason = _reason_for(rule, ctx, line, raw, cfg, fence,
                                       escalates, next_line)
         if verdict == "exploitable" and f.rule_id == "SS040" and not cfg.disable_demotions:
@@ -928,6 +914,11 @@ def verify_findings(findings: list, sources: dict[str, str],
                     f"interpreter argument '{plain}' is a plain value with no taint "
                     "signal (secret read, runtime input, decoded blob) — ambiguous, "
                     "not confirmed")
+        if combo and verdict != "exploitable":
+            verdict, reason = "exploitable", (
+                "secret access and network egress in the same +/-5-line "
+                "window — fail-closed combo, demotion forbidden in any "
+                "context")
         if verdict == "low_trust" and not cfg.drop_self_described_examples:
             verdict, reason = "inconclusive", reason + " (kept: profile keeps weak hits)"
         if cfg.disable_demotions and verdict != "exploitable":

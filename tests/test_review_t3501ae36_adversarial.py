@@ -157,10 +157,12 @@ class R3NoFileSkipping(unittest.TestCase):
 
 
 class R4PayloadHidingProbes(unittest.TestCase):
-    """The design question: demotable classes hide real payloads in fences.
-
-    The asserts pin CURRENT behaviour so any change to
-    NEVER_DEMOTE_CATEGORIES must consciously update this file.
+    """The exfil combo is fail-closed (card rework): a secret source and
+    network egress within +-5 lines forbid every demotion, in any doc
+    context — the fence no longer hides a copy-paste-runnable SSH-key
+    exfiltrator (C1). Updated by the coder lane from the reviewer's original
+    pin (which asserted the OLD behaviour: demoted, exit 0) — the card owner
+    resolved the escalated design question in favour of fail-closed.
     """
 
     def test_ssh_key_exfiltrator_in_fence_of_directive_file(self):
@@ -179,13 +181,17 @@ class R4PayloadHidingProbes(unittest.TestCase):
         payload = json.loads(proc.stdout)
         dem = {(d["rule_id"], d["file"]) for d in payload.get("demoted", [])}
         fnd = {f["rule_id"] for f in payload.get("findings", [])}
-        # CURRENT behaviour (design question for the card owner):
-        self.assertIn(("SS026", "skill-evil/SKILL.md"), dem,
-                      "SS026 exfil in a fence of SKILL.md: expected demoted "
-                      "(current design); if this fails, the exemption set "
-                      "changed — update NEVER_DEMOTE_CATEGORIES docs")
-        self.assertNotIn("SS026", fnd)
-        self.assertNotIn("SS020", fnd)
+        # NEW behaviour (fail-closed combo, owner decision): the fence does
+        # not excuse a secret-read + POST pair — the exfiltrator is a finding
+        # and the tree does not scan clean.
+        self.assertIn("SS026", fnd,
+                      "SS026 exfil in a fence of SKILL.md must stay a "
+                      "finding: secret access + network egress forbid "
+                      "demotion in any context")
+        self.assertNotIn(("SS026", "skill-evil/SKILL.md"), dem,
+                         "the combo must never be demoted, fence included")
+        self.assertNotEqual(proc.returncode, 0,
+                            "an exfiltrating skill must not scan clean")
 
     def test_exfiltrator_in_code_file_is_never_demoted(self):
         """The same payload as a .py artifact (context=code) stays a finding:

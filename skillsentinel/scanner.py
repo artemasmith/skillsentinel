@@ -24,6 +24,7 @@ from typing import Iterable
 
 from . import __version__
 from .rules import (DOC_FRAME, DOC_SECTION_HEADING, NEVER_DEMOTE_CATEGORIES,
+                    has_exfil_combo,
                     RULES_PATH, Rule, SHELL_PIPE, load_rules, SEVERITY_ORDER)
 from .verifier import (VERDICT_ORDER, VERIFIERS_BY_NAME, _ctx_of,
                        _directive_roots, _fenced_state, _in_code_span,
@@ -1050,6 +1051,16 @@ def _apply_doc_context_demotion(candidates: list[Finding], sources: dict[str, st
         if rule.category not in NEVER_DEMOTE_CATEGORIES:
             if phrase == _SPAN_IN_MATCH and f.verdict != "exploitable":
                 continue  # the verifier already wrote a specific reason for this hit
+            if has_exfil_combo(lines, f.line):
+                # Fail-closed combo (card t_3501ae36, rework): secret access +
+                # egress/subprocess within +-5 lines is exfiltration staging —
+                # a fence/span/quote/table/example section/JSONL record never
+                # demotes it, in any file context.
+                f.verdict = "exploitable"
+                f.reason = ("secret access and network egress in the same "
+                            "+/-5-line window — fail-closed combo, a doc "
+                            "context never demotes it")
+                continue
             f.verdict = "low_trust"
             f.reason = (f"match sits in a {phrase} — quoted documentation "
                         "(a specimen the agent reads about), not the artifact acting")

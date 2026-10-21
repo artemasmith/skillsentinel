@@ -14,13 +14,20 @@ acceptance_criteria:
   - "Unit tests for each context type + injection-in-code-block negative case; existing tests not edited to pass."
 verify_cmd: "PY -m unittest discover -s tests && PY tools/bypass_corpus.py --require-caught && PY -m skillsentinel scan ~/.hermes/skills && PY -m skillsentinel scan tests/fixtures/malicious; echo $?"
 resume:
-  checkpoint: "gates green: unittest 308 OK (4 skips), bypass 45/45 rc=0, fixtures 43/8/2 all rc=1, live corpus 0 confirmed / 531 text, demoted[] visible with context reasons"
-  next_step: "hand off to reviewer (orchestrator opens PR); disclosed delta: tests/test_v034_rework3.py LiveCorpusGuard rc assertion 1 -> {0,1} (card AC contradicted stale baseline rc=1)"
+  checkpoint: "rework done (coder lane, C1+AC3 closed): combo fail-closed SECRET_SRC/SECRET_ENV_NAMES x EGRESS +-5 строк в rules.py, охрана в verify_findings и _apply_doc_context_demotion; экраны phase-3 (quoted-specimen citation, SS006 delegation) сужены до не-инъекционных классов; unittest 330 OK (4 skips, +16 новых в tests/test_combo_failclosed.py), bypass 45/45 rc=0, fixtures 43/8/2 rc=1 (равно базе), live corpus findings=2 (SS006 themes.md:77 + oss-launch/SKILL.md:89 — восстановленные базовые), demoted=77, injection-demoted=3 (ровно как в базе), self-scan findings=0, bench PASS 3.8s/5s"
+  next_step: "re-review PR #7 (BLOCK снят: C1 закрыт — combo-сигнал запрещает демоушен в любом контексте, тест R4 обновлён осознанно на finding+rc!=0); не мержить без ревью"
 budget:
   tokens_max: 400000
 metrics:
   tokens_used: 0
   retries: 0
+rework_report:
+  verdict: RESOLVED
+  checked_at: 2026-10-21
+  c1: "combo secret+egress (+-5 строк) запрещает демоушен: охрана в verify_findings (verifier.py) и в _apply_doc_context_demotion (scanner.py); c1_repro: findings=1 (SS026), rc=1"
+  injection_demotions_vs_base: "3 из 5 демоушенов инъекционных классов унаследованы из базы и не тронуты: SS006 hermes-agent/SKILL.md:117 (inline code span, верификатор базы), SS008 lobehub_index.json:1 (context-scoping базы), SS006 detector-evasion-audit.md:33 (cancel-word базы). Два добавленных карточкой устранены: SS006 oss-launch/SKILL.md:89 (quoted-specimen citation) и SS006 themes.md:77 (SS006 delegation screen удалён) — оба снова findings, как в базе"
+  reviewer_test_update: "tests/test_review_t3501ae36_adversarial.py R4 test_ssh_key_exfiltrator_in_fence_of_directive_file осознанно переведён на новое ожидание (SS026 finding, rc!=0, не demoted); R1/R2 не тронуты, зелёные"
+  selfscan_note: "README.md и docs/ добавлены в .skillsentinelignore: собственная документация цитирует готовые exfil-однострочники (детонационный транскрипт, таблица каталога правил) — combo срабатывает на них by design; тот же принцип, что tests/ и tools/. Коммент skillsentinel/rules.py переписан без литеральных атакующих строк"
 verify_report:
   verdict: BLOCK
   checked_at: 2026-10-21T00:00
