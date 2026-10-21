@@ -54,6 +54,40 @@ SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 KINDS = {"intent", "capability"}
 CONTEXTS = {"directive", "code", "any"}
 
+# Doc-context demotion policy (card t_3501ae36). A match sitting in a
+# documentation context — a fenced code block, an inline code span, a
+# blockquote line, a markdown table row, an example/usage section, or a
+# JSONL log line quoting an earlier command — is a quoted specimen, not
+# the artifact acting. That reading is granted to every rule class except
+# the two for which prose is the attack surface wherever it is quoted
+# from: injection directives (prompt-injection, invisible-unicode — the
+# doc_surface family) and download-and-exec (rce-download — a piped
+# installer is the payload inside a fence too). Even those two keep the
+# specimen reading when the fence is explicitly documentation-framed
+# (see DOC_FRAME): real skills legitimately document `curl … | bash`
+# installers under Installation/Quick Start headings.
+NEVER_DEMOTE_CATEGORIES = frozenset(
+    {"prompt-injection", "invisible-unicode", "rce-download"})
+
+# A heading whose section is example/usage documentation.
+DOC_SECTION_HEADING = re.compile(r"\b(?:example|usage)\b", re.IGNORECASE)
+
+# Frame evidence that keeps even an injection/download-exec fence a
+# specimen: an Installation/Example/Quick Start heading, an intro line
+# above the fence, or an in-fence `#` installer comment. The boundaries
+# exclude tokens glued into hosts/paths (`x.example`, `install.sh`) — a
+# URL the payload cites is not framing prose, and the payload line itself
+# is never frame evidence (an attacker controls it).
+DOC_FRAME = re.compile(
+    r"(?<![\w./@-])(?:example|install\w*|usage|quick[ -]?starts?|sampl\w*|"
+    r"demos?)(?![\w./@-])", re.IGNORECASE)
+
+# A pipe or redirect into a shell interpreter — the download-and-exec
+# shape that an unframed fence does not excuse. `curl … | python -c` is
+# output parsing (data plumbing ubiquitous in API docs), not an exec pipe.
+SHELL_PIPE = re.compile(r"[|>]\s*(?:sudo\s+)?(?:bash|zsh|sh|dash|ksh)\b",
+                        re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class Rule:

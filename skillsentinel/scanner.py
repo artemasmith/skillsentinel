@@ -18,13 +18,16 @@ import unicodedata
 import zlib
 import zipfile
 from dataclasses import dataclass, field, asdict
+from itertools import islice
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 from . import __version__
-from .rules import RULES_PATH, Rule, load_rules, SEVERITY_ORDER
-from .verifier import (VERDICT_ORDER, VERIFIERS_BY_NAME, bind_rules,
-                       verify_findings)
+from .rules import (DOC_FRAME, DOC_SECTION_HEADING, NEVER_DEMOTE_CATEGORIES,
+                    RULES_PATH, Rule, SHELL_PIPE, load_rules, SEVERITY_ORDER)
+from .verifier import (VERDICT_ORDER, VERIFIERS_BY_NAME, _ctx_of,
+                       _directive_roots, _fenced_state, _in_code_span,
+                       bind_rules, verify_findings)
 
 MAX_FILE_BYTES = 2_000_000  # larger files are scanned as head+tail windows
 SCAN_WINDOW_BYTES = 512 * 1024  # window size on each side of an oversize file
@@ -910,6 +913,134 @@ def _read_archive_members(path: Path, rel: str, kind: str, *,
     return members, warnings
 
 
+# --- Doc-context demotion (card t_3501ae36) -----------------------------------
+# A payload that sits in a documentation context is a quoted specimen, not the
+# artifact acting — for every rule class except injection prose and
+# download-and-exec (see NEVER_DEMOTE_CATEGORIES in rules.py). The contexts are
+# detected here, after the verifier has graded, so the pass and the verifier
+# share one notion of fence/span/file-context (the verifier's own helpers).
+
+JSONL_SUFFIXES = (".jsonl", ".ndjson")
+_HEADING = re.compile(r"^#{1,6}\s")
+
+
+def _nearest_heading(lines: list[str], line_no: int) -> str:
+    """Text of the closest ATX heading at or above `line_no` (1-based), or ''."""
+    for i in range(line_no - 1, -1, -1):
+        if _HEADING.match(lines[i]):
+            return lines[i]
+    return ""
+
+
+def _fence_is_framed(lines: list[str], fenced: list[bool], line_no: int) -> bool:
+    """Is the fenced block explicitly presented as documentation? Frame
+    evidence: an example/install/usage word in an in-fence `#` comment above
+    the payload, on the intro line above the fence, or in the nearest heading
+    — never on the payload line itself (the attacker controls it). The live
+    corpus documents `curl … | bash` installers exactly this way
+    (Installation/Quick Start headings, `# Install …` comments); those are
+    specimens, not payloads."""
+    evidence: list[str] = []
+    open_idx = 0
+    for i in range(line_no - 1, -1, -1):
+        if not fenced[i]:
+            open_idx = i  # the fence marker line carries state False
+            break
+        if lines[i].lstrip().startswith("#"):  # shell comment inside the fence
+            evidence.append(lines[i])
+    for i in range(open_idx - 1, -1, -1):  # nearest non-blank line above the fence
+        if lines[i].strip():
+            evidence.append(lines[i])
+            break
+    evidence.append(_nearest_heading(lines, line_no))
+    return any(DOC_FRAME.search(e) for e in evidence)
+
+
+def _doc_context(lines: list[str], rel: str, line_no: int, raw: str,
+                 ctx: str, fenced_line: bool) -> str:
+    """The documentation context owning this match, as a short human phrase
+    used verbatim in the demotion reason ('' when none applies). A JSONL log
+    record is a log in any file context; the markdown contexts apply only to
+    directive/documentation files — in a code file a pipe or `>` is syntax,
+    not markup."""
+    line = lines[line_no - 1]
+    if Path(rel).name.lower().endswith(JSONL_SUFFIXES):
+        try:
+            if isinstance(json.loads(line), dict):
+                return "JSONL log line quoting an earlier command"
+        except ValueError:
+            pass  # prose smuggled into a .jsonl name is not a log record
+    if ctx not in ("documentation", "directive"):
+        return ""
+    if fenced_line:
+        return "fenced code block"
+    if _in_code_span(line, raw):
+        return "inline code span"
+    if line.lstrip().startswith(">"):
+        return "blockquote line"
+    if line.lstrip().startswith("|"):
+        return "markdown table row"
+    if DOC_SECTION_HEADING.search(_nearest_heading(lines, line_no)):
+        return "example/usage section"
+    return ""
+
+
+def _apply_doc_context_demotion(candidates: list[Finding], sources: dict[str, str],
+                                rules_by_id: dict[str, Rule], roots: frozenset[str],
+                                cfg) -> None:
+    """Settle doc contexts the verifier cannot see (blockquote, table row,
+    example section, JSONL record), and re-decide the fence for the classes
+    that never take the specimen reading from context alone. Mutates each
+    candidate's verdict/reason in place; skipped entirely by `strict`
+    (disable_demotions declines every judgement, doc contexts included)."""
+    if cfg.disable_demotions:
+        return
+    fenced_by_file: dict[str, list[bool]] = {}
+    ordinal: dict[tuple[str, int, str], int] = {}
+    for f in candidates:
+        rule = rules_by_id.get(f.rule_id)
+        text = sources.get(f.file)
+        if rule is None or rule.pattern is None or text is None:
+            continue
+        lines = text.splitlines()
+        if not 0 < f.line <= len(lines):
+            continue
+        ctx = _ctx_of(f.file, roots)
+        fenced = None
+        if ctx in ("documentation", "directive"):
+            fenced = fenced_by_file.get(f.file)
+            if fenced is None:
+                fenced = fenced_by_file[f.file] = _fenced_state(lines)
+        # The n-th match on the line, exactly as verify_findings graded it.
+        key = (f.file, f.line, f.rule_id)
+        n = ordinal.get(key, 0)
+        ordinal[key] = n + 1
+        m = next(islice(rule.pattern.finditer(lines[f.line - 1]), n, None), None)
+        raw = m.group(0) if m else f.snippet
+        fenced_line = bool(fenced is not None and fenced[f.line - 1])
+        phrase = _doc_context(lines, f.file, f.line, raw, ctx, fenced_line)
+        if not phrase:
+            continue
+        if rule.category not in NEVER_DEMOTE_CATEGORIES:
+            f.verdict = "low_trust"
+            f.reason = (f"match sits in a {phrase} — quoted documentation "
+                        "(a specimen the agent reads about), not the artifact acting")
+            continue
+        # Injection prose and download-and-exec: context alone grants nothing.
+        # An unframed fenced block is attacker-controlled framing — the hit
+        # stays a finding; a framed one keeps the verifier's specimen verdict.
+        if not fenced_line:
+            continue  # spans/tables/quotes keep the verifier's own reading
+        if rule.category == "rce-download" and not SHELL_PIPE.search(raw):
+            continue  # `curl … | python -c` parses output; it does not exec it
+        if _fence_is_framed(lines, fenced, f.line):
+            continue
+        f.verdict = "exploitable"
+        f.reason = ("payload in a fenced block with no documentation frame "
+                    "(no example/install/usage wording) — the fence is "
+                    "attacker-controlled framing, not a specimen; stays a finding")
+
+
 def scan_path(target: str | Path, rules_path: str | None = None, *,
               honor_ignores: bool = False,
               exclude: list[str] | None = None,
@@ -1123,12 +1254,18 @@ def scan_path(target: str | Path, rules_path: str | None = None, *,
     by_key: dict[tuple[str, int, str], tuple[str, str]] = {}
     for v in verdicts:
         by_key.setdefault((v.file, v.line, v.rule_id), (v.verdict, v.reason))
-    result.verdicts = {}
-    for v in verdicts:
-        result.verdicts[v.verdict] = result.verdicts.get(v.verdict, 0) + 1
     for f in candidates:
         f.verdict, f.reason = by_key.get((f.file, f.line, f.rule_id),
                                          ("inconclusive", "not graded"))
+    # Doc-context demotion (t_3501ae36): quoted specimens in documentation are
+    # not the artifact acting — except injection prose and shell pipes, which
+    # an unframed fence does not excuse. Runs after grading so the histogram
+    # and the findings/demoted split below reflect the final verdicts.
+    _apply_doc_context_demotion(candidates, sources, {r.id: r for r in rules},
+                                _directive_roots(scanned_rels), cfg)
+    result.verdicts = {}
+    for f in candidates:
+        result.verdicts[f.verdict] = result.verdicts.get(f.verdict, 0) + 1
         if f.verdict == "exploitable":
             result.findings.append(f)
         else:
