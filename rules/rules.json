@@ -555,5 +555,5 @@
   }
  ],
  "_about": "severity = worst case if the rule fires on a hostile artifact (for humans to triage). kind = intent (exploitation: a directive with no benign reading) | capability (dual-use). context = directive (agent instruction files) | code | any. requires_pattern = file-level correlation: the file must also match this, else the hit is not a finding. Cancellation (docs / negation / placeholders) is generic and lives in verifier.py so the catalog stays declarative. `patterns` are candidates, not findings.",
- "_version": "0.3.2"
+ "_version": "0.3.3"
 }

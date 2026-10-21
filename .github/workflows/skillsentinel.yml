@@ -7,12 +7,22 @@ on:
   schedule:
     - cron: "0 6 * * *"  # daily drift scan of this very repo's agent configs
 
+# One run per ref: a burst of pushes to a branch must not stack full matrices.
+# Pull-request runs are superseded by the next push; main runs always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
+      # Every advertised interpreter must be tested, not just the two ends:
+      # pyproject classifiers claim 3.10-3.14, so all five run here.
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -83,3 +93,151 @@ jobs:
         with:
           sarif_file: scan.sarif
           category: skillsentinel
+
+  action-gate:
+    # action.yml is how strangers consume the scanner (`uses: artemasmith/
+    # skillsentinel@vX.Y.Z`), and until now no job ever ran it: the composite
+    # step shells out with PYTHONPATH=$GITHUB_ACTION_PATH, parses the CLI
+    # summary line into the `findings` output and passes the CLI exit code up.
+    # If that parsing drifts, `findings` quietly becomes 0 and every consumer
+    # gating on it gets a false green. This job consumes the Action exactly as
+    # a stranger's workflow does — same inputs, same outputs — and asserts the
+    # numbers it must report back. Gate: tests/test_c4_ci.py.
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Consume the Action on a clean tree (expect exit 0, no findings)
+        id: clean
+        uses: ./
+        with:
+          path: docs
+          severity: medium
+          timeout: "300"
+          upload-sarif: "false"  # this job tests consumption, not the Security tab
+      - name: Consume the Action where findings sit below the exit threshold
+        # 02-jailbreak-trojan confirms 2 findings, all below `critical`, so the
+        # scan exits 0 while the summary line carries a non-zero number: exactly
+        # the case that proves the parse feeds `findings` (a failed step's
+        # outputs are the fragile half of the contract, asserted below instead).
+        id: parse
+        uses: ./
+        with:
+          path: tests/fixtures/malicious/02-jailbreak-trojan
+          severity: critical
+          timeout: "300"
+          upload-sarif: "false"
+      - name: Consume the Action on the attack corpus (findings are the point)
+        id: attack
+        uses: ./
+        with:
+          path: tests/fixtures/malicious
+          severity: critical
+          timeout: "300"
+          sarif: action.sarif
+          upload-sarif: "false"
+        # exit 1 on findings is the documented contract, not a job failure
+        continue-on-error: true
+      - name: Assert the Action reported what it scanned
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.attack.outcome }}" != "failure" ]; then
+            echo "the corpus scan must end non-zero (findings), got ${{ steps.attack.outcome }}"; exit 1
+          fi
+          if [ "${{ steps.clean.outcome }}" != "success" ]; then
+            echo "the clean scan must end zero, got ${{ steps.clean.outcome }}"; exit 1
+          fi
+          test -s action.sarif || { echo "the Action did not write the SARIF it was asked for"; exit 1; }
+          PARSED="${{ steps.parse.outputs.findings }}"
+          ZERO="${{ steps.clean.outputs.findings }}"
+          if [ -z "$PARSED" ] || [ "$PARSED" -lt 1 ] 2>/dev/null; then
+            echo "findings output is '${PARSED}' for a scan that confirmed findings — the summary-line parse in action.yml went stale"; exit 1
+          fi
+          if [ "$ZERO" != "0" ]; then
+            echo "findings output is '${ZERO}' for a clean scan, expected 0"; exit 1
+          fi
+          REPORTED="${{ steps.attack.outputs.findings }}"
+          python3 - "$PARSED" "$REPORTED" <<'PY'
+          import json, sys
+          below, reported = int(sys.argv[1]), sys.argv[2]
+          results = json.load(open("action.sarif", encoding="utf-8"))["runs"][0]["results"]
+          assert below >= 1, below
+          assert len(results) >= 20, f"SARIF carries {len(results)} results, the corpus has ~43"
+          if reported and int(reported) < 20:
+              print(f"::warning::findings output on the failed corpus step is {reported}, expected ~43")
+          print(f"findings below threshold = {below}, corpus step reported = {reported or 'n/a'}, SARIF results = {len(results)}")
+          PY
+
+  packaging:
+    # What a stranger installs is the wheel on PyPI, not this checkout: build
+    # the distribution, install it into a clean venv and prove the shipped
+    # package still finds its rule catalog and still detects anything. The
+    # install path is exactly where the S1-S3 defects lived (rule catalog not
+    # shipped / not found / bad input handled only from a repo checkout), and
+    # they were all found by running this sequence by hand. Now every push
+    # runs it. Gate: tests/test_c4_ci.py.
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          python3 -m pip install --quiet --upgrade build
+          python3 -m build --outdir dist
+      - name: Metadata must survive PyPI before it is uploaded
+        run: |
+          # PyPI rejects the upload, never the build: a deprecated license table
+          # or a broken long_description only shows up here. Found by hand in
+          # v0.3.2, so now every push checks it. Gate: tests/test_c4_ci.py.
+          python3 -m pip install --quiet --upgrade twine
+          python3 -m twine check dist/*
+          python3 - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          zf = zipfile.ZipFile(wheel)
+          meta = [n for n in zf.namelist() if n.endswith("METADATA")][0]
+          text = zf.read(meta).decode()
+          assert "License-Expression: MIT" in text, "no PEP 639 SPDX expression in METADATA"
+          assert "License-File: LICENSE" in text, "the license text is not shipped with the package"
+          print("metadata:", meta)
+          PY
+      - name: The wheel must ship the rule catalog
+        run: |
+          python3 - <<'PY'
+          import glob, zipfile
+          wheels = glob.glob("dist/*.whl")
+          assert len(wheels) == 1, wheels
+          names = zipfile.ZipFile(wheels[0]).namelist()
+          catalog = [n for n in names if n.endswith("share/skillsentinel/rules/rules.json")]
+          assert catalog, f"the shipped wheel has no rule catalog: {names}"
+          print("rule catalog inside the wheel:", catalog[0])
+          PY
+      - name: Install the wheel in a clean venv and scan from outside the tree
+        run: |
+          # A stray PYTHONPATH aimed at this checkout (or at build/*.egg-info)
+          # lets pip decide the same version is "already installed" and skip the
+          # install; the job then dies on a missing console script with no clue
+          # why. That silent skip was hit by hand during S2 — unset it here.
+          unset PYTHONPATH
+          python3 -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/pip install --quiet --no-cache-dir dist/*.whl
+          test -x /tmp/wheel-venv/bin/skillsentinel || {
+            echo "the wheel installed no skillsentinel console script"; exit 1; }
+          /tmp/wheel-venv/bin/skillsentinel --version
+          cd /tmp   # no repo checkout on sys.path: the installed package must stand alone
+          set +e
+          /tmp/wheel-venv/bin/skillsentinel scan "$GITHUB_WORKSPACE/tests/fixtures/malicious" --severity critical --timeout 300
+          RC=$?
+          set -e
+          if [ "$RC" -ne 1 ]; then
+            echo "the installed wheel must report the corpus with exit 1, got $RC"; exit 1
+          fi
+          /tmp/wheel-venv/bin/skillsentinel scan "$GITHUB_WORKSPACE/docs" --severity medium --timeout 300

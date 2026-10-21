@@ -32,6 +32,16 @@ sys.exit(7)
 
 SHIM_TOOLS = ("curl", "wget", "nc", "ncat", "ping", "telnet", "ssh", "scp", "ftp", "dig")
 
+# What counts as a detonatable script (V7: a .js miner or an SS044 PowerShell
+# cradle must detonate too, not only shell/python). Everything else — prose,
+# configs, data — stays untouched.
+SCRIPT_SUFFIXES = (".sh", ".bash", ".py", ".js", ".rb", ".pl", ".ps1")
+# Interpreter per suffix; shell scripts (and files named `install`) run under
+# /bin/sh. A missing interpreter (e.g. no pwsh on the host) surfaces honestly
+# as a non-zero exit in the report, never as a silent skip.
+INTERPRETERS = {".py": "python3", ".js": "node", ".rb": "ruby",
+                ".pl": "perl", ".ps1": "pwsh"}
+
 
 class DetonationRefusedError(RuntimeError):
     """bwrap cannot guarantee sandbox isolation — detonation must not run."""
@@ -57,11 +67,15 @@ def _tails(out: str, err: str, n: int = 500) -> tuple[str, str]:
 
 
 def find_scripts(root: Path) -> list[Path]:
+    # A single script file is a valid target too (V6): `scan tool.sh
+    # --detonate` used to rglob the file's (nonexistent) children and print a
+    # silent "(0 scripts)".
+    candidates = [root] if root.is_file() else sorted(root.rglob("*"))
     scripts = []
-    for p in sorted(root.rglob("*")):
+    for p in candidates:
         if not p.is_file() or p.is_symlink():
             continue
-        if p.suffix in (".sh", ".py", ".bash") or p.name == "install":
+        if p.suffix in SCRIPT_SUFFIXES or p.name == "install":
             scripts.append(p)
     return scripts
 
@@ -173,10 +187,10 @@ def detonate_file(path: Path, timeout: int | None = 10,
         # the kernel tears down the whole sandbox tree — without it the payload
         # would outlive the monitor as an orphan host process
         cmd += ["--unshare-pid", "--die-with-parent", "--new-session"]
-        if script_copy.suffix == ".py":
-            cmd += ["python3", f"/work/{path.name}"]
-        else:
-            cmd += ["/bin/sh", f"/work/{path.name}"]
+        # interpreter by suffix; anything unlisted (a git hook, `install`)
+        # keeps the historical default of running under /bin/sh
+        interp = INTERPRETERS.get(script_copy.suffix, "/bin/sh")
+        cmd += [interp, f"/work/{path.name}"]
 
         env = {
             "PATH": "/shims:/usr/bin:/bin",

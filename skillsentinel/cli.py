@@ -94,7 +94,8 @@ def _print_findings(result, use_color: bool, suppressed: int = 0,
     dropped = len(result.demoted)
     inconclusive = [f for f in result.demoted if f.verdict == "inconclusive"]
     print(f"SkillSentinel v{__version__} — scanned {result.path} "
-          f"({result.files_scanned} files, {result.files_skipped} skipped, "
+          f"({result.files_scanned} text, {result.binary_files_skipped} binary "
+          f"skipped, {result.files_skipped} skipped, "
           f"profile: {result.profile})")
     if result.undecodable_files:
         # D3: undecodable files are reported loudly, never silently dropped.
@@ -227,6 +228,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"error: limit reached: {n} of {m} files scanned "
               f"(raise --max-files to see the rest)", file=sys.stderr)
         return 2
+    if result.unreadable_files:
+        # V5: the readable files' findings are printed above; an unreadable
+        # file is still an input problem, so the run warns and exits 2.
+        # Input problems outrank the baseline exit contract: a baseline run
+        # over a tree we could not fully read must not report a clean 0.
+        names = ", ".join(result.unreadable_files[:3])
+        more = f" (+{len(result.unreadable_files) - 3} more)" \
+            if len(result.unreadable_files) > 3 else ""
+        print(f"warning: {len(result.unreadable_files)} file(s) could not be "
+              f"read: {names}{more}", file=sys.stderr)
+        return 2
     if args.write_baseline:
         try:
             n_recorded = write_baseline(result, args.write_baseline)
@@ -268,6 +280,14 @@ def cmd_watch(args: argparse.Namespace) -> int:
             old = load_snapshot(snap_path)
         except (OSError, ValueError) as e:
             raise InputError(f"cannot read snapshot {snap_path}: {e}") from None
+        snap_root = old.get("root")
+        if snap_root and Path(snap_root) != root:
+            # V2: diffing another tree used to silently compare apples to
+            # oranges — a fresh install dir reads as "clean" against any
+            # snapshot. The snapshot pins the root it was taken under.
+            raise InputError(
+                f"snapshot root mismatch: the snapshot was taken under "
+                f"{snap_root}, not {root} — re-run watch init")
         new = snapshot_dir(root)
         d = diff_snapshots(old, new)
         if d["clean"]:
@@ -346,7 +366,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="scan at most N files, then exit 2 with a limit report; "
                         "bounds huge trees without silently ignoring the rest")
     s.add_argument("--detonate", action="store_true",
-                   help="run discovered scripts in a disposable bwrap sandbox "
+                   help="run discovered scripts (.sh/.bash/.py/.js/.rb/.pl/.ps1 "
+                        "and files named `install`) in a disposable bwrap sandbox "
                         "with no network access (--unshare-net; requires "
                         "bubblewrap, skipped with a notice otherwise)")
     s.add_argument("--allow-net", action="store_true",
