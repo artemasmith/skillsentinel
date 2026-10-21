@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .scanner import Finding, _iter_target_files, scan_path, sha256_file
+from .scanner import (Finding, InputError, _iter_target_files, scan_path,
+                      sha256_file)
 
 SNAPSHOT_VERSION = 1
 
@@ -37,12 +38,23 @@ def _iter_snapshot_files(root: Path) -> Iterable[Path]:
 
 def snapshot_dir(root: Path) -> dict:
     root = root.resolve()
+    if not root.is_dir():
+        # V1: a typo'd path used to yield a 0-entry snapshot that `init`
+        # reported as success ("0 files") — every later diff then watched the
+        # wrong tree and always reported it clean.
+        raise InputError(f"watch path is not an existing directory: {root}")
     entries = []
     for p in _iter_snapshot_files(root):
         try:
             entries.append(Entry(str(p.relative_to(root)), sha256_file(p), p.stat().st_size))
         except OSError:
             continue
+    if not entries:
+        # Defence in depth, mirroring the scanner's empty-scan refusal: a
+        # 0-entry snapshot is indistinguishable from having watched the wrong
+        # path, so it is refused instead of recorded as a baseline.
+        raise InputError(f"no files found under {root} — "
+                         "refusing to record an empty snapshot")
     return {
         "version": SNAPSHOT_VERSION,
         "root": str(root),
