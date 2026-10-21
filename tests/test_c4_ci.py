@@ -23,6 +23,15 @@ ACTION = (REPO / "action.yml").read_text(encoding="utf-8")
 CI_YML = (REPO / ".github" / "workflows" / "skillsentinel.yml").read_text(encoding="utf-8")
 README = (REPO / "README.md").read_text(encoding="utf-8")
 CHANGELOG = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+PYPROJECT = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+
+
+def _matrix_versions():
+    """The interpreter versions the test job actually runs (text-parsed: the
+    project is zero-dependency, so no PyYAML at test time)."""
+    block = re.search(r"python-version:\s*\[([^\]]*)\]", CI_YML)
+    assert block, "the test job must run a python-version matrix"
+    return [v.strip().strip("\"'") for v in block.group(1).split(",") if v.strip()]
 
 
 class ActionTimeoutTests(unittest.TestCase):
@@ -229,6 +238,94 @@ class BenchToolTests(unittest.TestCase):
             capture_output=True, text=True, cwd=REPO, timeout=120)
         self.assertEqual(p.returncode, 1,
                          "an over-budget bench must exit 1 so CI fails")
+
+
+class WorkflowGateTests(unittest.TestCase):
+    """The CI envelope itself: an advertised interpreter or a job that promises
+    to consume the shipped artifacts must actually be exercised, otherwise the
+    matrix is a claim nobody gates."""
+
+    def test_every_advertised_python_is_in_the_matrix(self):
+        advertised = set(re.findall(
+            r"Programming Language :: Python :: (\d+\.\d+)", PYPROJECT))
+        self.assertTrue(advertised, "pyproject must advertise interpreter versions")
+        tested = set(_matrix_versions())
+        self.assertEqual(
+            advertised - tested, set(),
+            f"advertised in classifiers but never tested: {sorted(advertised - tested)}")
+        self.assertEqual(
+            tested - advertised, set(),
+            f"tested but not advertised in classifiers: {sorted(tested - advertised)}")
+
+    def test_matrix_starts_at_the_declared_minimum(self):
+        declared = re.search(r'requires-python = ">=(\d+\.\d+)"', PYPROJECT)
+        assert declared, "requires-python must declare a minimum"
+        floor = min(_matrix_versions(), key=lambda v: tuple(map(int, v.split("."))))
+        self.assertEqual(floor, declared.group(1),
+                         "the lowest tested interpreter must be the declared minimum")
+
+    def test_pr_runs_cancel_previous_ones(self):
+        self.assertRegex(CI_YML, r"(?m)^concurrency:")
+        self.assertIn("cancel-in-progress", CI_YML)
+        self.assertIn("github.ref", CI_YML,
+                      "one run per ref: a push burst must not stack full matrices")
+
+    def test_packaging_job_installs_the_built_wheel_outside_the_checkout(self):
+        """The install path is where the S1-S3 defects lived, so the job must
+        build the distribution, prove the rule catalog is inside it and then run
+        the console script with the checkout off sys.path."""
+        parts = CI_YML.split("packaging:", 1)
+        self.assertEqual(len(parts), 2, "CI must have a packaging job")
+        body = parts[1]
+        self.assertIn("python3 -m build", body)
+        self.assertIn("pip install --quiet --no-cache-dir dist/*.whl", body)
+        self.assertIn("cd /tmp", body,
+                      "the installed wheel must be exercised outside the checkout")
+        self.assertRegex(body, r"(?m)^\s*unset PYTHONPATH\s*$",
+                         "a stray PYTHONPATH makes pip skip the install silently")
+        self.assertIn("rules.json", body, "the job must assert the catalog ships in the wheel")
+        self.assertIn("twine check", body,
+                      "PyPI rejects metadata, not the build: check it in the job that builds")
+        self.assertIn("License-Expression: MIT", body,
+                      "the shipped METADATA must carry the SPDX expression")
+        self.assertIn("$GITHUB_WORKSPACE", body,
+                      "scan targets must be absolute after cd /tmp")
+
+    def test_action_gate_job_consumes_the_action_and_checks_its_outputs(self):
+        """action.yml is how strangers consume the scanner; the parse of the CLI
+        summary line into `findings` must be asserted, or a stale parse becomes
+        a false green for every consumer gating on it."""
+        parts = CI_YML.split("action-gate:", 1)
+        self.assertEqual(len(parts), 2, "CI must have an action-gate job")
+        body = parts[1]
+        self.assertIn("uses: ./", body, "the gate must consume action.yml like a stranger")
+        for step in ("clean", "parse", "attack"):
+            self.assertRegex(body, rf"(?m)^\s+id: {step}\s*$")
+        self.assertIn("steps.parse.outputs.findings", body,
+                      "the reported findings count must be asserted, not just the exit code")
+        self.assertIn("steps.clean.outputs.findings", body)
+        self.assertIn("action.sarif", body, "the gate must prove the SARIF was written")
+
+
+class PackagingMetadataTests(unittest.TestCase):
+    """PyPI metadata must be PEP 639-clean: the license table is deprecated
+    (setuptools drops support 2027-02-18) and a license classifier next to an
+    SPDX expression is an error, not a warning."""
+
+    def test_license_is_an_spdx_expression_with_the_license_file(self):
+        self.assertRegex(PYPROJECT, r'(?m)^license = "MIT"$')
+        self.assertNotIn("license = { text", PYPROJECT,
+                         "the license table is deprecated; use an SPDX expression")
+        self.assertRegex(PYPROJECT, r'(?m)^license-files = \["LICENSE"\]$',
+                         "the text of the license must ship in the distribution")
+        self.assertNotIn("License ::", PYPROJECT,
+                         "PEP 639 forbids a License classifier next to `license`")
+
+    def test_build_requires_a_pep639_aware_setuptools(self):
+        pin = re.search(r"setuptools>=(\d+)", PYPROJECT)
+        assert pin, "the build backend must pin a setuptools floor"
+        self.assertGreaterEqual(int(pin.group(1)), 77,
+                                "SPDX license expressions need setuptools>=77")
 
 
 if __name__ == "__main__":
