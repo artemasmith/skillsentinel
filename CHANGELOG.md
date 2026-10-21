@@ -5,14 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.4]
+## [0.3.4] - 2026-10-21
 
-Recall fixes for the v0.3.3 audit (defects R1–R3; acceptance tests in
-`tests/test_v034_audit.py`): three classes of hostile skill the walk and the
-rule catalog simply did not see. The malicious corpus still prints the same
-43 confirmed findings — the new rules fire only on non-English signals.
+Two waves in one release. The P4 precision wave shrinks the false-positive
+class "a skill is an instruction to an agent" — what ships here is the
+baseline: a known-accepted tree stops failing the gate without a single
+finding leaving the report (the wider doc-context demotion below is specified
+for this wave but not implemented yet). The recall wave closes defects R1–R3
+from the v0.3.3 audit (acceptance tests in `tests/test_v034_audit.py`): three
+classes of hostile skill the walk and the rule catalog simply did not see.
+The malicious corpus still prints the same 43 confirmed findings — the new
+rules fire only on non-English signals.
 
 ### Added
+
+- `--write-baseline FILE` / `--baseline FILE`: content-keyed, per-finding
+  baselines (path + rule id + snippet sha256, plus a `rules_version` header).
+  Deleting a file or an unrelated line does not shift the baseline; editing
+  the matched line re-triggers it as a new finding to re-review; a file
+  baselined for one rule never hides a different rule's finding in the same
+  file. A baseline whose `rules_version` differs from the installed one is
+  not trusted — loud stderr warning, every finding re-evaluated as new,
+  exit 1. The effect is exit-code-only: baselined findings stay in the report
+  (tagged `(baselined)` in text output) and in JSON/SARIF exactly as before;
+  the two flags are mutually exclusive (error, exit 2).
+- Documentation in the README: a Baselines section with the honest framing —
+  a baseline hides known-accepted findings from the exit code, it never hides
+  them from the report — and a worked write / re-run / new-finding-probe
+  example on a real skill corpus, cleanup included; the doc-context demotion
+  documented under How verdicts work as planned, not yet shipped; the new
+  flags in the exit-code note and the Commands synopsis.
 
 - `--no-follow-symlinks`: refuse every symlink instead of following it. Each
   declined link lands in `files_skipped` with a stderr warning naming it and
@@ -121,6 +143,23 @@ rule catalog simply did not see. The malicious corpus still prints the same
   documentation surface gained the nouns `phrasings`, `attack strings` and
   `teaches against` — quoted-match-only, so a quoted specimen framed by them
   demotes as a citation while the same words unquoted stay caught.
+
+### Planned (not yet implemented)
+
+- Doc-context demotion: a match that sits in documentation context — a fenced
+  code block, an inline code span, a blockquote line, a markdown table row, an
+  example/usage section, or a log/JSONL line that merely quotes an earlier
+  command — will be demoted, not confirmed, and will stay visible in the JSON
+  `demoted` array with a reason string naming the context that decided it
+  (never silently dropped). The lever will never apply to the injection class
+  (SS001, SS002, SS004, SS006, SS007, SS008 — the `doc_surface` family) or to
+  download-and-exec classes; how an injection may be marked as a quoted
+  specimen on the documentation surface is governed by the `doc_surface`
+  policy, not by this lever. `--profile strict` still disables demotions.
+  Today the levers are the fenced block, the inline code span, the quoted
+  citation frame on the documentation surface, signature-table glue and
+  explicit negation, each already carrying a written reason.
+
 
 ## [0.3.3]
 
