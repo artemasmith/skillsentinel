@@ -161,11 +161,11 @@ class _SingleLineScanTestCase(unittest.TestCase):
                          f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
         payload = json.loads(proc.stdout)
         hits = confirming(payload)
+        pairs = [(h['rule_id'], h['severity'], h['file'], h['line'])
+                 for h in hits]
         self.assertEqual(
             hits, [],
-            f"{text[:60]!r}…: benign line confirmed "
-            f"{[(h['rule_id'], h['severity'], h['file'], h['line'])
-                for h in hits]}")
+            f"{text[:60]!r}…: benign line confirmed {pairs}")
 
     def assert_ss046_confirmed(self, proc, text):
         self.assertEqual(proc.returncode, 1,
@@ -196,11 +196,12 @@ class RealCorpusControlTests(unittest.TestCase):
                          f"stderr={proc.stderr!r}")
         payload = json.loads(proc.stdout)
         hits = confirming(payload)
+        pairs = [(h['rule_id'], h['severity'], h['file'], h['line'])
+                 for h in hits]
         self.assertEqual(
             hits, [],
             "real skill confirmed "
-            f"{[(h['rule_id'], h['severity'], h['file'], h['line'])
-                for h in hits]}")
+            f"{pairs}")
 
 
 class ParentheticalConfigSourceTests(_SingleLineScanTestCase):

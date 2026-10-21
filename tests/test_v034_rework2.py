@@ -111,10 +111,11 @@ class _SingleLineScanTestCase(unittest.TestCase):
                         f"written reason: {payload!r}")
         named = [e for e in entries
                  if "negat" in str(e.get("reason", "")).lower()]
+        demoted_pairs = [(e.get('rule_id'), e.get('file'), e.get('line'),
+                          e.get('reason')) for e in payload['demoted']]
         self.assertTrue(named,
                         f"{text!r}: no {rule} demotion reason names the negation: "
-                        f"{[(e.get('rule_id'), e.get('file'), e.get('line'),
-                             e.get('reason')) for e in payload['demoted']]}")
+                        f"{demoted_pairs}")
 
 
 class CrossLanguageNegatorLeakTests(_SingleLineScanTestCase):

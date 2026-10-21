@@ -107,11 +107,11 @@ class _SingleLineScanTestCase(unittest.TestCase):
                          f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
         payload = json.loads(proc.stdout)
         hits = confirming(payload)
+        pairs = [(h['rule_id'], h['severity'], h['file'], h['line'])
+                 for h in hits]
         self.assertEqual(
             hits, [],
-            f"{text[:60]!r}…: benign line confirmed "
-            f"{[(h['rule_id'], h['severity'], h['file'], h['line'])
-                for h in hits]}")
+            f"{text[:60]!r}…: benign line confirmed {pairs}")
 
     def _assert_rule_confirmed(self, proc, text, rule_id, severity):
         self.assertEqual(proc.returncode, 1,
