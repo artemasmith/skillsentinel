@@ -296,10 +296,13 @@ class LiveCorpusGuardTests(unittest.TestCase):
                          f"live corpus {LIVE_SKILLS} not present")
     def test_live_corpus_exploitable_within_baseline(self):
         proc = run_cli("scan", str(LIVE_SKILLS), "--json", timeout=300)
-        self.assertEqual(proc.returncode, 1,
-                         f"live corpus has confirmed findings, expected "
-                         f"rc=1: rc={proc.returncode} "
-                         f"stderr={proc.stderr!r}")
+        # Card t_3501ae36 settles the four baseline pairs as demoted FPs —
+        # a clean live corpus (rc=0) is the goal, not a regression; rc=1
+        # stays valid while any baseline pair is still confirmed. The guard
+        # this test owns is the COUNT below, not the exit code.
+        self.assertIn(proc.returncode, (0, 1),
+                      f"live corpus scan failed: rc={proc.returncode} "
+                      f"stderr={proc.stderr!r}")
         payload = json.loads(proc.stdout)
         ex = [f for f in payload["findings"]
               if f.get("verdict") == "exploitable"]

@@ -468,6 +468,20 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
                     "where the token is read from, not the object being "
                     "sent")
 
+    # Card t_3501ae36 (phase 3): citation/delegation shapes that re-frame a
+    # quoted or delegated match as documentation even in a directive file.
+    # Generic context tells only — elision, a second quoted specimen, a
+    # code-span object with restored user agency — never a bare quote (D11).
+    if _quoted_specimen_citation(line, raw):
+        return ("low_trust", "quoted specimen citation — the enclosing quote "
+                "is elided or one of several quoted specimens on the line, "
+                "an enumeration of examples, not a directive being issued")
+    if rule_id == "SS006" and _ss006_delegation_with_agency(line, raw, next_line):
+        return ("inconclusive", "delegation, not concealment — the object is "
+                "a command quoted in a code span and the passage restores "
+                "the user's agency over it (they can still run it); the "
+                "agent is told to do its own job, not to hide the step")
+
     if ctx == "directive":
         return ("exploitable", "directive addressed to an agent with no benign reading")
     if ctx == "documentation" and doc_surface:
@@ -555,6 +569,88 @@ def _quoted_match(line: str, raw: str) -> bool:
         if ch in _QUOTE_PAIRS:
             opener, open_at = ch, i + 1
     return False
+
+
+# Card t_3501ae36 (phase 3): the citation shapes that keep a quoted payload a
+# specimen even in a directive file. A quotation is a citation when the quote
+# itself is citation-shaped — elided («do NOT tell the user to run …» — you
+# elide when you quote) or one of several quoted specimens on the line
+# («do NOT …», «write_file the whole SKILL.md» — an enumeration of examples).
+# A bare quoted payload has neither tell and stays the file acting (D11,
+# `d11-docs-quoted-naked`); rework r4 dropped the unconditional quoted-specimen
+# screen for exactly that reason, and these two tells are the narrowed form.
+_ELISION = re.compile(r"…|\.\.\.")
+
+# The second quoted span must be an attack specimen itself, not any quoted
+# word (a JSON key like "description") — that is what separates a line
+# enumerating quoted examples from a directive that merely also quotes a key.
+_SPECIMEN_TOKEN = re.compile(
+    r"(?:" + ATTACK_STRINGS.pattern +
+    r"|\b(?:SKILL|AGENTS|CLAUDE)\.md\b|\bwrite_file\b)", re.IGNORECASE)
+
+
+def _quote_spans(line: str) -> list[tuple[int, int]]:
+    """Every quoted span (open exclusive, close exclusive) `_quoted_match`
+    would recognise; a nested opener inside an open span is not one."""
+    spans: list[tuple[int, int]] = []
+    open_at: int | None = None
+    opener = ""
+    for i, ch in enumerate(line):
+        if open_at is not None:
+            if _QUOTE_PAIRS.get(opener) == ch:
+                spans.append((open_at, i))
+                open_at = None
+            continue
+        if ch in _QUOTE_PAIRS:
+            opener, open_at = ch, i + 1
+    return spans
+
+
+def _quoted_specimen_citation(line: str, raw: str) -> bool:
+    """Is the match a citation-shaped quoted specimen? See `_ELISION` above."""
+    if not raw:
+        return False
+    span = _matched_span(line, raw)
+    if span is None:
+        return False
+    enclosing = next(((a, b) for a, b in _quote_spans(line)
+                      if a <= span[0] and span[1] <= b), None)
+    if enclosing is None:
+        return False
+    if _ELISION.search(line[enclosing[0]:enclosing[1]]):
+        return True
+    return any(_SPECIMEN_TOKEN.search(line[a:b])
+               for a, b in _quote_spans(line) if (a, b) != enclosing)
+
+
+# SS006 precision screen: `You apply it; do NOT tell the user to run
+# `/skin` (they still can, but it's your job)` — the hide-activity pattern's
+# phrase head over a delegation directive. The object is a command quoted in
+# a code span and the passage restores the user's agency over it. Concealment
+# hides the step from the user; delegation names the command and leaves
+# running it to them.
+_SS006_RUN_OBJECT = re.compile(
+    r"\bto\s+(?:run|execute|invoke|call|use)\b[^`\n]{0,40}?`[^`\n]{1,60}`",
+    re.IGNORECASE)
+_AGENCY_CUE = re.compile(
+    r"\b(?:still\s+can|can\s+still|still\s+(?:may|could|might)|"
+    r"(?:may|could|might)\s+still|"
+    r"it'?s\s+(?:your|the\s+agent'?s)\s+job|is\s+(?:your|the\s+agent'?s)\s+job|"
+    r"up\s+to\s+(?:them|the\s+user|you)|at\s+any\s+time|whenever\s+they\s+want|"
+    r"if\s+they\s+(?:want|prefer|ask))\b", re.IGNORECASE)
+
+
+def _ss006_delegation_with_agency(line: str, raw: str, next_line: str = "") -> bool:
+    """SS006's phrase matched a delegation, not a concealment: the region from
+    the match to the end of the next line holds a run-verb whose object is a
+    code span AND an explicit user-agency cue over that same object."""
+    span = _matched_span(line, raw)
+    if span is None:
+        return False
+    region = " ".join(x for x in (line[span[1]:].strip(),
+                                  (next_line or "").strip()) if x)
+    return bool(_SS006_RUN_OBJECT.search(region)
+                and _AGENCY_CUE.search(region))
 
 
 # Rework r3 (card t_c7ce62b2, probe T2): the sensitive paths SS046 keys on,

@@ -922,6 +922,11 @@ def _read_archive_members(path: Path, rel: str, kind: str, *,
 
 JSONL_SUFFIXES = (".jsonl", ".ndjson")
 _HEADING = re.compile(r"^#{1,6}\s")
+# The span-inside-match tell (card t_3501ae36, phase 3): weaker than the six
+# structural contexts, so it only settles a hit the verifier CONFIRMED — a
+# candidate already demoted with its own written reason (a rule-specific
+# precision screen, a cancel word) keeps that reason.
+_SPAN_IN_MATCH = "line quoting an inline code span inside the match"
 
 
 def _nearest_heading(lines: list[str], line_no: int) -> str:
@@ -956,6 +961,25 @@ def _fence_is_framed(lines: list[str], fenced: list[bool], line_no: int) -> bool
     return any(DOC_FRAME.search(e) for e in evidence)
 
 
+def _span_inside_match(line: str, raw: str) -> bool:
+    """The match itself quotes a code span: a non-empty `...` token sits
+    fully INSIDE the matched text. `- **Major rewrite:** `write_file` the
+    whole SKILL.md.` — the matched directive names its own verb as quoted
+    code, which a real directive never does (it just says it)."""
+    if not raw:
+        return False
+    j = raw.find("`")
+    while j >= 0:
+        k = raw.find("`", j + 1)
+        if k <= j + 1:  # empty or missing span
+            if k < 0:
+                return False
+        else:
+            return True
+        j = raw.find("`", k + 1)
+    return False
+
+
 def _doc_context(lines: list[str], rel: str, line_no: int, raw: str,
                  ctx: str, fenced_line: bool) -> str:
     """The documentation context owning this match, as a short human phrase
@@ -976,6 +1000,8 @@ def _doc_context(lines: list[str], rel: str, line_no: int, raw: str,
         return "fenced code block"
     if _in_code_span(line, raw):
         return "inline code span"
+    if _span_inside_match(line, raw):
+        return _SPAN_IN_MATCH
     if line.lstrip().startswith(">"):
         return "blockquote line"
     if line.lstrip().startswith("|"):
@@ -1022,6 +1048,8 @@ def _apply_doc_context_demotion(candidates: list[Finding], sources: dict[str, st
         if not phrase:
             continue
         if rule.category not in NEVER_DEMOTE_CATEGORIES:
+            if phrase == _SPAN_IN_MATCH and f.verdict != "exploitable":
+                continue  # the verifier already wrote a specific reason for this hit
             f.verdict = "low_trust"
             f.reason = (f"match sits in a {phrase} — quoted documentation "
                         "(a specimen the agent reads about), not the artifact acting")
