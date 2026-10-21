@@ -82,19 +82,23 @@ jobs:
         # uploading it published ~43 fake critical alerts (all under
         # tests/fixtures/malicious/) on a public repo's Security tab — read by
         # every visitor as real defects. Gate: tests/test_c4_ci.py.
-        run: python3 -m skillsentinel scan . --sarif $RUNNER_TEMP/scan.sarif --severity medium --honor-ignores --timeout 300
+        # scan.sarif lands in the repo root only after the scan has finished
+        # traversing, so it never scans itself; fixtures.sarif however is
+        # written by an earlier step and would sit inside the scanned tree —
+        # it goes to $RUNNER_TEMP instead.
+        run: python3 -m skillsentinel scan . --sarif scan.sarif --severity medium --honor-ignores --timeout 300
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: skillsentinel-sarif
           path: |
-            $RUNNER_TEMP/scan.sarif
-            $RUNNER_TEMP/fixtures.sarif
+            scan.sarif
+            ${{ runner.temp }}/fixtures.sarif
       - name: Upload SARIF to the GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always()  # the self-scan result must land in the Security tab even when the job failed
         with:
-          sarif_file: $RUNNER_TEMP/scan.sarif
+          sarif_file: scan.sarif
           category: skillsentinel
 
   action-gate:
