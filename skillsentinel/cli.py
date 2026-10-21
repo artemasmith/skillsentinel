@@ -231,6 +231,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if result.unreadable_files:
         # V5: the readable files' findings are printed above; an unreadable
         # file is still an input problem, so the run warns and exits 2.
+        # Input problems outrank the baseline exit contract: a baseline run
+        # over a tree we could not fully read must not report a clean 0.
         names = ", ".join(result.unreadable_files[:3])
         more = f" (+{len(result.unreadable_files) - 3} more)" \
             if len(result.unreadable_files) > 3 else ""
