@@ -14,3 +14,5 @@ tools/
 # SkillSentinel's own drift-watch snapshot is generated state (gitignored): it
 # embeds file contents, so a self-scan reads it as "rewrites own rules/hooks".
 .skillsentinel-snapshot.json
+# README quotes the fixtures' real exfil one-liners as a detonation transcript of recorded detector output — unsanitizable without falsifying documented behavior.
+README.md

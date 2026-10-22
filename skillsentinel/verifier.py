@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass, field
 from itertools import islice
 
+from .rules import NEVER_DEMOTE_CATEGORIES, has_exfil_combo
+
 # Verdicts, strongest first. `exploitable` = the artifact can actually do the thing.
 VERDICT_ORDER = {"exploitable": 4, "capability": 3, "inconclusive": 2, "low_trust": 1}
 
@@ -468,6 +470,19 @@ def _reason_for(rule, ctx: str, line: str, raw: str,
                     "where the token is read from, not the object being "
                     "sent")
 
+    # Card t_3501ae36 (phase 3): citation/delegation shapes that re-frame a
+    # quoted or delegated match as documentation even in a directive file.
+    # Generic context tells only — elision, a second quoted specimen, a
+    # code-span object with restored user agency — never a bare quote (D11).
+    # Injection classes never take the specimen reading (AC3): these screens
+    # are gated to the demotable categories, so a quoted SS006 stays the file
+    # acting instead of gaining a new demotion path this card added.
+    if rule.category not in NEVER_DEMOTE_CATEGORIES \
+            and _quoted_specimen_citation(line, raw):
+        return ("low_trust", "quoted specimen citation — the enclosing quote "
+                "is elided or one of several quoted specimens on the line, "
+                "an enumeration of examples, not a directive being issued")
+
     if ctx == "directive":
         return ("exploitable", "directive addressed to an agent with no benign reading")
     if ctx == "documentation" and doc_surface:
@@ -555,6 +570,66 @@ def _quoted_match(line: str, raw: str) -> bool:
         if ch in _QUOTE_PAIRS:
             opener, open_at = ch, i + 1
     return False
+
+
+# Card t_3501ae36 (phase 3): the citation shapes that keep a quoted payload a
+# specimen even in a directive file. A quotation is a citation when the quote
+# itself is citation-shaped — elided («do NOT tell the user to run …» — you
+# elide when you quote) or one of several quoted specimens on the line
+# («do NOT …», «write_file the whole SKILL.md» — an enumeration of examples).
+# A bare quoted payload has neither tell and stays the file acting (D11,
+# `d11-docs-quoted-naked`); rework r4 dropped the unconditional quoted-specimen
+# screen for exactly that reason, and these two tells are the narrowed form.
+_ELISION = re.compile(r"…|\.\.\.")
+
+# The second quoted span must be an attack specimen itself, not any quoted
+# word (a JSON key like "description") — that is what separates a line
+# enumerating quoted examples from a directive that merely also quotes a key.
+_SPECIMEN_TOKEN = re.compile(
+    r"(?:" + ATTACK_STRINGS.pattern +
+    r"|\b(?:SKILL|AGENTS|CLAUDE)\.md\b|\bwrite_file\b)", re.IGNORECASE)
+
+
+def _quote_spans(line: str) -> list[tuple[int, int]]:
+    """Every quoted span (open exclusive, close exclusive) `_quoted_match`
+    would recognise; a nested opener inside an open span is not one."""
+    spans: list[tuple[int, int]] = []
+    open_at: int | None = None
+    opener = ""
+    for i, ch in enumerate(line):
+        if open_at is not None:
+            if _QUOTE_PAIRS.get(opener) == ch:
+                spans.append((open_at, i))
+                open_at = None
+            continue
+        if ch in _QUOTE_PAIRS:
+            opener, open_at = ch, i + 1
+    return spans
+
+
+def _quoted_specimen_citation(line: str, raw: str) -> bool:
+    """Is the match a citation-shaped quoted specimen? See `_ELISION` above."""
+    if not raw:
+        return False
+    span = _matched_span(line, raw)
+    if span is None:
+        return False
+    enclosing = next(((a, b) for a, b in _quote_spans(line)
+                      if a <= span[0] and span[1] <= b), None)
+    if enclosing is None:
+        return False
+    if _ELISION.search(line[enclosing[0]:enclosing[1]]):
+        return True
+    return any(_SPECIMEN_TOKEN.search(line[a:b])
+               for a, b in _quote_spans(line) if (a, b) != enclosing)
+
+
+# SS006 precision screen (REMOVED, rework of card t_3501ae36): the
+# "delegation, not concealment" screen demoted SS006 — a prompt-injection
+# rule — which AC3 forbids outright: an injection class never takes a
+# demotion from a card-added screen, in any context. The live-corpus line it
+# softened (autonomous-ai-agents/hermes-agent/references/themes.md) is base
+# behaviour confirmed exploitable again.
 
 
 # Rework r3 (card t_c7ce62b2, probe T2): the sensitive paths SS046 keys on,
@@ -820,6 +895,13 @@ def verify_findings(findings: list, sources: dict[str, str],
         # an exfil destination wrapped to the next line is still the
         # destination of this directive.
         next_line = lines[f.line] if f.line < len(lines) else ""
+        # Fail-closed combo (card t_3501ae36, rework): a secret source and
+        # egress/subprocess within +-5 lines of the match forbid every
+        # demotion — the hit is exfiltration staging, not a quoted specimen.
+        # Applied ahead of the profile levers so no profile (balanced/loose/
+        # paranoid) can soften it, and before the doc-context pass, which
+        # re-checks the same signal and would otherwise overwrite the verdict.
+        combo = has_exfil_combo(lines, f.line)
         verdict, reason = _reason_for(rule, ctx, line, raw, cfg, fence,
                                       escalates, next_line)
         if verdict == "exploitable" and f.rule_id == "SS040" and not cfg.disable_demotions:
@@ -832,6 +914,11 @@ def verify_findings(findings: list, sources: dict[str, str],
                     f"interpreter argument '{plain}' is a plain value with no taint "
                     "signal (secret read, runtime input, decoded blob) — ambiguous, "
                     "not confirmed")
+        if combo and verdict != "exploitable":
+            verdict, reason = "exploitable", (
+                "secret access and network egress in the same +/-5-line "
+                "window — fail-closed combo, demotion forbidden in any "
+                "context")
         if verdict == "low_trust" and not cfg.drop_self_described_examples:
             verdict, reason = "inconclusive", reason + " (kept: profile keeps weak hits)"
         if cfg.disable_demotions and verdict != "exploitable":

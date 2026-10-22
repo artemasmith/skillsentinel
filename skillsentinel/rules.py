@@ -54,6 +54,122 @@ SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 KINDS = {"intent", "capability"}
 CONTEXTS = {"directive", "code", "any"}
 
+# Doc-context demotion policy (card t_3501ae36). A match sitting in a
+# documentation context — a fenced code block, an inline code span, a
+# blockquote line, a markdown table row, an example/usage section, or a
+# JSONL log line quoting an earlier command — is a quoted specimen, not
+# the artifact acting. That reading is granted to every rule class except
+# the two for which prose is the attack surface wherever it is quoted
+# from: injection directives (prompt-injection, invisible-unicode — the
+# doc_surface family) and download-and-exec (rce-download — a piped
+# installer is the payload inside a fence too). Even those two keep the
+# specimen reading when the fence is explicitly documentation-framed
+# (see DOC_FRAME): real skills legitimately document `curl … | bash`
+# installers under Installation/Quick Start headings.
+NEVER_DEMOTE_CATEGORIES = frozenset(
+    {"prompt-injection", "invisible-unicode", "rce-download"})
+
+# Fail-closed combo signal (card t_3501ae36, rework): reading a secret and
+# shipping it out (or staging it through a shell) within the same few lines is
+# exfiltration, wherever it sits — a fence, an inline code span, a blockquote,
+# a table row, an example/usage section or a JSONL log line never turns that
+# pair into a quoted specimen, because a copy-paste-runnable two-liner is
+# exactly what "documentation" framing hides best (the C1 probe: a fenced
+# python block in a SKILL.md that reads a private key and posts it to a
+# collector). Narrow by design: each side alone is graded exactly as before
+# (a backup skill that reads credentials, an install block that pipes a
+# downloader into a shell); only BOTH inside one +-5-line window forbid
+# demotion.
+#
+# Two deliberate narrowings, both measured on the live corpus, the repo
+# self-scan and the pinned fixtures (the persistence fixture's rc-writer
+# line, the changelog's RCE-class line, the GitHub-API table in
+# pr-workflow.md):
+#   1. The env-var name class is CASE-SENSITIVE — lowercase `token`/`secret`
+#      as prose words must not arm the combo; the uppercase constants a
+#      payload actually reads can. An env-var name also arms the combo only
+#      from the matched line itself (see has_exfil_combo) — a name in prose
+#      five lines from a data-flagged command is an API table, not exfil.
+#   2. A bare pipe into sh/bash is NOT on the send side — it is mention-not-use
+#      in every category enumeration (a changelog line naming the RCE class),
+#      and the executable shape it names is owned by the rce-download category,
+#      which NEVER_DEMOTE_CATEGORIES already keeps un-demoted wherever it is
+#      quoted. The send side keeps the exfil shapes: POST/PUT/PATCH, the
+#      data/upload flags below, nc/scp/base64-pipes (C1's POST call included).
+# Secret paths mirror the credential surface the catalog already keys on
+# (SS021/SS022/SS026).
+SECRET_SRC = re.compile(
+    r"(?:"
+    r"\.ssh[/\\][^\s\"'`]*|id_rsa|id_ed25519|id_ecdsa"       # key files
+    r"|\.aws[/\\]credentials|\.netrc\b|/etc/shadow"
+    r"|\.kube[/\\]config|\.gnupg[/\\]"
+    r"|(?<![\w.-])\.env\b"                                    # env file, not .environment
+    r")",
+    re.IGNORECASE)
+
+# Uppercase by construction: env vars are shouted, prose is not.
+SECRET_ENV_NAMES = re.compile(
+    r"\b(?:GITHUB_TOKEN|API_KEY|APIKEY|ACCESS_TOKEN|"
+    r"AWS_SECRET_ACCESS_KEY|SECRET|PASSWORD|PASSWD|TOKEN)\b")
+
+# Network egress / subprocess staging: the send side of the combo. GET-style
+# fetches (requests.get, plain curl without a data flag) are reading, not
+# sending — they do not arm the combo.
+EGRESS = re.compile(
+    r"(?:"
+    r"requests\.(?:post|put|patch)\b"
+    r"|urlopen\b|urllib\.[^\n\"']{0,80}\bPost\b"
+    r"|(?:curl|wget)\b[^|\n]{0,120}"
+    r"(?:--data(?:-[a-z]+)?|-d\b|--upload-file|-T\b|--form|-F\b|-T\s"
+    r"|--post-file|--body-(?:data|file))"
+    r"|fetch\s*\([^)]{0,120}method\s*:\s*['\"](?:POST|PUT|PATCH)"
+    r"|\b(?:nc|netcat)\b|\bscp\b"
+    r"|base64\s*\|"
+    r")",
+    re.IGNORECASE)
+
+COMBO_WINDOW = 5
+
+
+def has_exfil_combo(lines: list[str], line_no: int) -> bool:
+    """Do (a) a secret source and (b) egress/subprocess both appear within
+    +-COMBO_WINDOW lines of `line_no` (1-based)? Path-shaped secret evidence
+    (a key file, a credentials store) spans the whole window — a staged
+    read-then-post is the payload. An env-var NAME is ubiquitous in prose
+    ("set GITHUB_TOKEN before running", GitHub-API tables that never ship the
+    token), so it arms the combo only from the matched line itself — the line
+    where the hit and the send stand together."""
+    if not lines:
+        return False
+    lo = max(0, line_no - 1 - COMBO_WINDOW)
+    hi = min(len(lines), line_no + COMBO_WINDOW)
+    window = "\n".join(lines[lo:hi])
+    if not EGRESS.search(window):
+        return False
+    if SECRET_SRC.search(window):
+        return True
+    hit_line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+    return bool(SECRET_ENV_NAMES.search(hit_line))
+
+# A heading whose section is example/usage documentation.
+DOC_SECTION_HEADING = re.compile(r"\b(?:example|usage)\b", re.IGNORECASE)
+
+# Frame evidence that keeps even an injection/download-exec fence a
+# specimen: an Installation/Example/Quick Start heading, an intro line
+# above the fence, or an in-fence `#` installer comment. The boundaries
+# exclude tokens glued into hosts/paths (`x.example`, `install.sh`) — a
+# URL the payload cites is not framing prose, and the payload line itself
+# is never frame evidence (an attacker controls it).
+DOC_FRAME = re.compile(
+    r"(?<![\w./@-])(?:example|install\w*|usage|quick[ -]?starts?|sampl\w*|"
+    r"demos?)(?![\w./@-])", re.IGNORECASE)
+
+# A pipe or redirect into a shell interpreter — the download-and-exec
+# shape that an unframed fence does not excuse. `curl … | python -c` is
+# output parsing (data plumbing ubiquitous in API docs), not an exec pipe.
+SHELL_PIPE = re.compile(r"[|>]\s*(?:sudo\s+)?(?:bash|zsh|sh|dash|ksh)\b",
+                        re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class Rule:
