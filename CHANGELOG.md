@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-10-22
+
+The precision wave that 0.3.4 specified but did not implement: a match in
+**documentation context** is no longer a finding. Skill files teach as much as
+they instruct, and a rule quoted in a fenced block, an inline code span, a
+blockquote, a table row, an example/usage section or a pasted log line is the
+skill explaining itself, not the skill doing something. Such matches now land
+in `demoted[]` with a machine-readable `reason` instead of the verdict, so
+nothing leaves the report — only the exit code changes.
+
+The carve-out is deliberately narrow. Injection-class rules (`SS001`, `SS002`,
+`SS004`, `SS006`, `SS007`, `SS008`) and the download-and-exec classes are
+**exempt**: obfuscated intent is not cancelled by wrapping it in backticks. The
+fail-closed combination of "secret-shaped value + egress" also stays armed in
+all six documentation shapes — the one place where the cost of trusting prose
+is unbounded.
+
+### Added
+
+- Doc-context demotion for non-injection rules: six documentation shapes
+  detected per line (fenced code block, inline code span, blockquote, table
+  row, example/usage section, quoted log line), each demotion carrying its
+  reason. Injection and download-and-exec classes are explicitly exempt.
+- `tests/test_doc_context_demotion.py` and `tests/test_combo_failclosed.py`:
+  the exempt classes are asserted to still fire in every documentation shape,
+  and the secret-plus-egress combination is asserted fail-closed in all six.
+
+### Changed
+
+- Live corpus (`~/.hermes/skills`, 531 files): confirmed findings 4 → 2,
+  demoted 79, zero files skipped. Both survivors are known false positives on
+  honest prose (tracked for the follow-up precision card, not hidden here).
+- `docs/rules.md`: the `SS041` relay example is stubbed as `n&#99; -e` — the
+  catalog is itself scanned in CI, and a literal send-side token five lines
+  above the sensitive-path list armed the scanner's own fail-closed heuristic.
+  The rule still matches `nc -e` literally.
+- CI: SARIF output moved out of the scanned tree (`$RUNNER_TEMP` / repo root),
+  and the docs catalog is sanitized so the self-scan and packaging jobs stop
+  tripping on our own documentation.
+
+### Fixed
+
+- Adversarial review round 2 (C1): the exfil combo is closed in 6/6
+  documentation contexts; the card's "zero injection-class demotions" property
+  is asserted by test.
+- Malicious / i18n / archive fixtures: unchanged from 0.3.4 (43 / 8 / 2
+  exploitable, exit 1); bypass corpus 45/45 caught; `unittest discover` 308
+  tests OK.
+
 ## [0.3.4] - 2026-10-21
 
 Two waves in one release. The P4 precision wave shrinks the false-positive
